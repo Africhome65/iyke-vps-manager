@@ -214,3 +214,13 @@ def test_wireguard_peer_registry_accepts_client_host_address(monkeypatch, tmp_pa
     monkeypatch.setattr(helper.os.path, "lexists", lambda path: True)
     monkeypatch.setattr(helper, "_read_root_file", lambda path: payload)
     assert helper._peer_registry()["phone01"]["address"] == "10.66.0.2/32"
+
+
+def test_wireguard_service_start_is_not_persistent(monkeypatch):
+    calls = []
+    monkeypatch.setattr(helper.os, "lstat", lambda path: type("Info", (), {
+        "st_mode": stat.S_IFREG | 0o600, "st_uid": 0
+    })())
+    monkeypatch.setattr(helper, "run", lambda args, *a, **k: calls.append(args))
+    assert helper.wireguard_service("start")["requested_state"] == "start"
+    assert calls == [["systemctl", "start", "wg-quick@wg0.service"]]
