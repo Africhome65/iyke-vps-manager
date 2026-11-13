@@ -287,6 +287,15 @@ def create_app(test_config=None):
                       "openvpn": {"installed": False, "instances": []}}
             flash(str(exc), "error")
         peers = []
+        public_endpoint = ""
+        try:
+            endpoint_info = json.loads(run_helper("wireguard_public_endpoint") or "{}")
+            public_endpoint = endpoint_info.get("endpoint", "")
+            if not isinstance(public_endpoint, str):
+                public_endpoint = ""
+        except (RuntimeError, json.JSONDecodeError):
+            # Manual endpoint entry remains available if public-IP discovery is unavailable.
+            pass
         if status.get("wireguard", {}).get("installed"):
             try:
                 peers = json.loads(run_helper("wireguard_peers") or "[]")
@@ -294,7 +303,8 @@ def create_app(test_config=None):
                     peers = []
             except (RuntimeError, json.JSONDecodeError) as exc:
                 flash(str(exc), "error")
-        return render_template("vpn.html", vpn=status, peers=peers)
+        return render_template("vpn.html", vpn=status, peers=peers,
+                               public_endpoint=public_endpoint)
 
 
     @app.post("/vpn/wireguard/install")
