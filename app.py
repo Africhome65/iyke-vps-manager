@@ -200,7 +200,10 @@ def create_app(test_config=None):
                 else:
                     db.execute("UPDATE admins SET password_hash=? WHERE id=?",
                                (generate_password_hash(new_password), current_user.id))
-                    audit("password_changed", "Administrator password changed")
+                    db.execute("INSERT INTO audit(admin,action,detail,created_at) VALUES(?,?,?,?)",
+                               (current_user.username, "password_changed",
+                                "Administrator password changed",
+                                datetime.utcnow().isoformat(timespec="seconds")))
                     flash("Administrator password updated.", "success")
                     return redirect(url_for("password_settings"))
         return render_template("password.html")
@@ -213,7 +216,7 @@ def create_app(test_config=None):
         except (RuntimeError, json.JSONDecodeError) as exc:
             rows = []
             flash(str(exc), "error")
-        return render_template("users.html", users=rows)
+        return render_template("users.html", users=rows, today=date.today().isoformat())
 
     @app.post("/users/create")
     @login_required
