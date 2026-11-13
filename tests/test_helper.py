@@ -1,4 +1,5 @@
 import importlib.util
+from importlib.machinery import SourceFileLoader
 import json
 import os
 import stat
@@ -7,7 +8,8 @@ from pathlib import Path
 import pytest
 
 HELPER_PATH = Path(__file__).resolve().parents[1] / "ops" / "iyke-vps-helper"
-SPEC = importlib.util.spec_from_file_location("iyke_helper", HELPER_PATH)
+LOADER = SourceFileLoader("iyke_helper", str(HELPER_PATH))
+SPEC = importlib.util.spec_from_loader("iyke_helper", LOADER)
 helper = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(helper)
 
