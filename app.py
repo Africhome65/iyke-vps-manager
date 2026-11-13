@@ -287,6 +287,8 @@ def create_app(test_config=None):
                       "openvpn": {"installed": False, "instances": []},
                       "xray": {"installed": False, "service": "not-installed"}}
             flash(str(exc), "error")
+        # Older helper responses and test doubles may not include Xray yet.
+        status.setdefault("xray", {"installed": False, "service": "not-installed"})
         peers = []
         public_endpoint = ""
         try:
