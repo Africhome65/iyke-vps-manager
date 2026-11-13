@@ -398,19 +398,18 @@ def test_xray_nginx_config_has_acme_redirect_and_exact_ws_routes():
 
 
 def test_xray_certificate_validation_accepts_matching_valid_files(monkeypatch, tmp_path):
-    live = tmp_path / "live"
-    live.mkdir()
-    cert = live / "fullchain.pem"
-    key = live / "privkey.pem"
+    cert = tmp_path / "fullchain.pem"
+    key = tmp_path / "privkey.pem"
     cert.write_text("certificate", encoding="utf-8")
     key.write_text("private key", encoding="utf-8")
     cert.chmod(0o644)
     key.chmod(0o600)
     monkeypatch.setattr(helper.os.path, "realpath",
                         lambda path, strict=False: str(cert if path.endswith("fullchain.pem") else key))
-    monkeypatch.setattr(helper.os, "stat", lambda path, follow_symlinks=False: (
-        cert.stat() if path == str(cert) else key.stat()
-    ))
+    def fake_stat(path, follow_symlinks=False):
+        mode = 0o644 if path == str(cert) else 0o600
+        return type("Info", (), {"st_mode": stat.S_IFREG | mode, "st_uid": 0, "st_nlink": 1})()
+    monkeypatch.setattr(helper.os, "stat", fake_stat)
     def fake_run(args, **kwargs):
         if args[1:4] == ["x509", "-in", str(cert)]:
             return helper.subprocess.CompletedProcess(args, 0, "OK", "")
@@ -426,19 +425,15 @@ def test_xray_certificate_validation_accepts_matching_valid_files(monkeypatch, t
 
 
 def test_xray_certificate_validation_rejects_wide_private_key_permissions(monkeypatch, tmp_path):
-    live = tmp_path / "live"
-    live.mkdir()
-    cert = live / "fullchain.pem"
-    key = live / "privkey.pem"
+    cert = tmp_path / "fullchain.pem"
+    key = tmp_path / "privkey.pem"
     cert.write_text("certificate", encoding="utf-8")
     key.write_text("private key", encoding="utf-8")
-    cert.chmod(0o644)
-    key.chmod(0o640)
     monkeypatch.setattr(helper.os.path, "realpath",
                         lambda path, strict=False: str(cert if path.endswith("fullchain.pem") else key))
-    monkeypatch.setattr(helper.os, "stat", lambda path, follow_symlinks=False: (
-        cert.stat() if path == str(cert) else key.stat()
-    ))
+    def fake_stat(path, follow_symlinks=False):
+        mode = 0o644 if path == str(cert) else 0o640
+        return type("Info", (), {"st_mode": stat.S_IFREG | mode, "st_uid": 0, "st_nlink": 1})()
+    monkeypatch.setattr(helper.os, "stat", fake_stat)
     with pytest.raises(SystemExit):
         helper._xray_validate_certificate("vpn.example.com")
-
