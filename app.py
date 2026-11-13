@@ -4,6 +4,7 @@ import re
 import secrets
 import sqlite3
 import subprocess
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from functools import wraps
 from pathlib import Path
@@ -48,8 +49,8 @@ def create_app(test_config=None):
     csrf = CSRFProtect(app)
     login_manager = LoginManager(app)
     login_manager.login_view = "login"
-    Limiter(get_remote_address, app=app, default_limits=["300 per day", "60 per hour"],
-            storage_uri="memory://")
+    limiter = Limiter(get_remote_address, app=app, default_limits=["300 per day", "60 per hour"],
+                      storage_uri="memory://")
 
     def connect_db():
         Path(app.config["DATABASE"]).parent.mkdir(parents=True, exist_ok=True)
@@ -57,8 +58,20 @@ def create_app(test_config=None):
         db.row_factory = sqlite3.Row
         return db
 
+    @contextmanager
+    def db_session():
+        db = connect_db()
+        try:
+            yield db
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
     def init_db():
-        with connect_db() as db:
+        with db_session() as db:
             db.execute("""CREATE TABLE IF NOT EXISTS admins (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT NOT NULL UNIQUE,
@@ -87,12 +100,12 @@ def create_app(test_config=None):
 
     @login_manager.user_loader
     def load_user(admin_id):
-        with connect_db() as db:
+        with db_session() as db:
             row = db.execute("SELECT id,username FROM admins WHERE id=?", (admin_id,)).fetchone()
         return Admin(row) if row else None
 
     def audit(action, detail):
-        with connect_db() as db:
+        with db_session() as db:
             db.execute("INSERT INTO audit(admin,action,detail,created_at) VALUES(?,?,?,?)",
                        (current_user.username if current_user.is_authenticated else "system",
                         action, detail[:240], datetime.utcnow().isoformat(timespec="seconds")))
@@ -116,7 +129,7 @@ def create_app(test_config=None):
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "same-origin"
         response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; style-src 'self'; script-src 'self'; "
+            "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; "
             "img-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
         )
         return response
@@ -126,13 +139,14 @@ def create_app(test_config=None):
         return jsonify(status="ok", service="iyke-vps-manager")
 
     @app.route("/login", methods=["GET", "POST"])
+    @limiter.limit("5 per minute")
     def login():
         if current_user.is_authenticated:
             return redirect(url_for("dashboard"))
         if request.method == "POST":
             username = request.form.get("username", "").strip()
             password = request.form.get("password", "")
-            with connect_db() as db:
+            with db_session() as db:
                 row = db.execute("SELECT * FROM admins WHERE username=?", (username,)).fetchone()
             if row and check_password_hash(row["password_hash"], password):
                 login_user(Admin(row), remember=False, fresh=True)
@@ -163,9 +177,33 @@ def create_app(test_config=None):
             uptime=uptime, audit_rows=recent_audit())
 
     def recent_audit():
-        with connect_db() as db:
+        with db_session() as db:
             return db.execute("SELECT admin,action,detail,created_at FROM audit "
                               "ORDER BY id DESC LIMIT 8").fetchall()
+
+    @app.route("/settings/password", methods=["GET", "POST"])
+    @login_required
+    def password_settings():
+        if request.method == "POST":
+            current_password = request.form.get("current_password", "")
+            new_password = request.form.get("new_password", "")
+            confirm_password = request.form.get("confirm_password", "")
+            with db_session() as db:
+                row = db.execute("SELECT password_hash FROM admins WHERE id=?",
+                                 (current_user.id,)).fetchone()
+                if not row or not check_password_hash(row["password_hash"], current_password):
+                    flash("Current password is incorrect.", "error")
+                elif len(new_password) < 16:
+                    flash("New password must be at least 16 characters.", "error")
+                elif new_password != confirm_password:
+                    flash("New passwords do not match.", "error")
+                else:
+                    db.execute("UPDATE admins SET password_hash=? WHERE id=?",
+                               (generate_password_hash(new_password), current_user.id))
+                    audit("password_changed", "Administrator password changed")
+                    flash("Administrator password updated.", "success")
+                    return redirect(url_for("password_settings"))
+        return render_template("password.html")
 
     @app.get("/users")
     @login_required
