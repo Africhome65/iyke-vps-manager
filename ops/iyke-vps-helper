@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Narrow privileged helper. Installed root-owned; invoked only through sudo."""
+"""Strict JSON privileged helper. Installed root-owned; invoked through one fixed sudo command."""
 import datetime
 import json
 import os
@@ -7,8 +7,9 @@ import re
 import subprocess
 import sys
 
-NAME = re.compile(r"^[a-z_][a-z0-9_-]{0,30}\$?$")
+NAME = re.compile(r"^[a-z_][a-z0-9_-]{0,30}\\$?$")
 SYSTEM_UID_MIN = 1000
+MAX_REQUEST_BYTES = 8192
 
 
 def fail(message, code=1):
@@ -24,7 +25,7 @@ def run(argv, input_text=None):
 
 
 def valid_name(value, must_exist=False):
-    if not NAME.fullmatch(value) or value in {"root", "nobody"}:
+    if not isinstance(value, str) or not NAME.fullmatch(value) or value in {"root", "nobody"}:
         fail("Invalid or protected username")
     if must_exist:
         try:
@@ -36,20 +37,42 @@ def valid_name(value, must_exist=False):
     return value
 
 
+def valid_expiry(value):
+    if not isinstance(value, str):
+        fail("Expiry must use YYYY-MM-DD")
+    try:
+        parsed = datetime.date.fromisoformat(value)
+        if parsed <= datetime.date.today():
+            fail("Expiry must be in the future")
+    except ValueError:
+        fail("Expiry must use YYYY-MM-DD")
+    return value
+
+
 def main():
     if os.geteuid() != 0:
         fail("This helper must run as root")
-    if len(sys.argv) < 2:
-        fail("Missing action")
-    action = sys.argv[1]
-    if action == "list" and len(sys.argv) == 2:
+    raw = sys.stdin.buffer.read(MAX_REQUEST_BYTES + 1)
+    if len(raw) > MAX_REQUEST_BYTES:
+        fail("Request is too large")
+    try:
+        request = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        fail("Invalid JSON request")
+    if not isinstance(request, dict) or not isinstance(request.get("action"), str):
+        fail("Invalid request")
+    action = request["action"]
+
+    if action == "list":
+        if set(request) != {"action"}:
+            fail("Unexpected request fields")
         rows = []
         for line in run(["getent", "passwd"]).splitlines():
             parts = line.split(":")
             if len(parts) != 7:
                 continue
             name, _, uid, gid, _, home, shell = parts
-            if int(uid) < SYSTEM_UID_MIN or name in {"nobody"}:
+            if int(uid) < SYSTEM_UID_MIN or name == "nobody":
                 continue
             expiry = ""
             try:
@@ -62,46 +85,43 @@ def main():
                          "shell": shell, "expiry": expiry})
         print(json.dumps(rows))
         return
-    if action == "create" and len(sys.argv) == 4:
-        name = valid_name(sys.argv[2])
-        expiry = sys.argv[3]
-        try:
-            parsed = datetime.date.fromisoformat(expiry)
-            if parsed <= datetime.date.today():
-                fail("Expiry must be in the future")
-        except ValueError:
-            fail("Expiry must use YYYY-MM-DD")
-        password = sys.stdin.readline().rstrip("\n")
-        if len(password) < 20 or "\n" in password or ":" in password:
+
+    if action == "create":
+        if set(request) != {"action", "username", "expiry", "password"}:
+            fail("Unexpected request fields")
+        name = valid_name(request["username"])
+        expiry = valid_expiry(request["expiry"])
+        password = request["password"]
+        if (not isinstance(password, str) or len(password) < 20 or len(password) > 256
+                or any(ch in password for ch in "\\r\\n:")):
             fail("Invalid generated password")
         run(["useradd", "--create-home", "--shell", "/bin/bash", "--expiredate", expiry, name])
         try:
-            run(["chpasswd"], f"{name}:{password}\n")
+            run(["chpasswd"], f"{name}:{password}\\n")
         except SystemExit:
             run(["userdel", "--remove", name])
             raise
         print("created")
         return
-    if action == "expire" and len(sys.argv) == 4:
-        name = valid_name(sys.argv[2], must_exist=True)
-        expiry = sys.argv[3]
-        try:
-            parsed = datetime.date.fromisoformat(expiry)
-            if parsed <= datetime.date.today():
-                fail("Expiry must be in the future")
-        except ValueError:
-            fail("Expiry must use YYYY-MM-DD")
-        run(["id", name])
+
+    if action == "expire":
+        if set(request) != {"action", "username", "expiry"}:
+            fail("Unexpected request fields")
+        name = valid_name(request["username"], must_exist=True)
+        expiry = valid_expiry(request["expiry"])
         run(["chage", "--expiredate", expiry, name])
         print("updated")
         return
-    if action == "delete" and len(sys.argv) == 3:
-        name = valid_name(sys.argv[2], must_exist=True)
-        run(["id", name])
+
+    if action == "delete":
+        if set(request) != {"action", "username"}:
+            fail("Unexpected request fields")
+        name = valid_name(request["username"], must_exist=True)
         run(["userdel", "--remove", name])
         print("deleted")
         return
-    fail("Unsupported action or invalid arguments")
+
+    fail("Unsupported action")
 
 
 if __name__ == "__main__":
