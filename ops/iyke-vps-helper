@@ -63,7 +63,7 @@ def main():
         print(json.dumps(rows))
         return
     if action == "create" and len(sys.argv) == 4:
-        name = valid_name(sys.argv[2], must_exist=True)
+        name = valid_name(sys.argv[2])
         expiry = sys.argv[3]
         try:
             parsed = datetime.date.fromisoformat(expiry)
@@ -83,7 +83,7 @@ def main():
         print("created")
         return
     if action == "expire" and len(sys.argv) == 4:
-        name = valid_name(sys.argv[2])
+        name = valid_name(sys.argv[2], must_exist=True)
         expiry = sys.argv[3]
         try:
             parsed = datetime.date.fromisoformat(expiry)
