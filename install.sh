@@ -35,7 +35,7 @@ python3 -m venv "$APP_DIR/venv"
 
 install -o root -g root -m 0755 "$APP_DIR/ops/iyke-vps-helper" "$HELPER"
 cat > /etc/sudoers.d/iyke-vps-manager <<EOF
-$SERVICE_USER ALL=(root) NOPASSWD: $HELPER *
+$SERVICE_USER ALL=(root) NOPASSWD: $HELPER
 EOF
 chmod 0440 /etc/sudoers.d/iyke-vps-manager
 visudo -cf /etc/sudoers.d/iyke-vps-manager
