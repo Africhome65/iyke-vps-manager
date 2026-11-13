@@ -92,7 +92,7 @@ def create_app(test_config=None):
             ).fetchone() is None:
                 if len(bootstrap_password) < 16:
                     raise RuntimeError("Bootstrap password must be at least 16 characters")
-                db.execute("INSERT INTO admins(username,password_hash,created_at) VALUES(?,?,?)",
+                db.execute("INSERT OR IGNORE INTO admins(username,password_hash,created_at) VALUES(?,?,?)",
                            (bootstrap_user, generate_password_hash(bootstrap_password),
                             datetime.utcnow().isoformat(timespec="seconds")))
 
