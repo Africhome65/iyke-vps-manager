@@ -16,7 +16,7 @@ NoNewPrivileges=false
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=false
-ReadWritePaths=/etc /home /var/log /var/mail /var/spool /var/lib/iyke-vps-manager
+ReadWritePaths=/etc /home /var/log /var/mail /var/spool /var/lib/iyke-vps-manager /var/lib/iyke-vps-manager-state
 UMask=0077
 LockPersonality=true
 
