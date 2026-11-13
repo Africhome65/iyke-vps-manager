@@ -104,7 +104,7 @@ def save_registry(names):
     fd, temporary = tempfile.mkstemp(prefix=".managed-users-", dir=STATE_DIR)
     try:
         os.fchmod(fd, 0o600)
-        os.fchown(fd, os.geteuid(), 0)
+        os.fchown(fd, os.geteuid(), os.getegid())
         with os.fdopen(fd, "w", encoding="utf-8") as target:
             fd = -1
             json.dump(sorted(names), target, separators=(",", ":"))
