@@ -26,7 +26,7 @@
         <div class="vpn-list">{% for peer in peers %}
           <div class="vpn-instance"><div><b>{{ peer.name }}</b><small class="muted">{{ peer.address }} · {{ peer.endpoint }}</small></div>
             <div class="inline"><a href="{{ url_for('download_wireguard_profile', name=peer.name) }}">Download</a><a href="{{ url_for('wireguard_profile_qr', name=peer.name) }}" target="_blank" rel="noopener">QR code</a>
-            <form method="post" action="{{ url_for('revoke_wireguard_peer', name=peer.name) }}" class="inline" onsubmit="return confirm('Revoke this client? Its saved profile will be deleted.');"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="secondary" type="submit">Revoke</button></form></div>
+            <form method="post" action="{{ url_for('revoke_wireguard_peer', name=peer.name) }}" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="secondary" type="submit">Revoke</button></form></div>
           </div>
         {% endfor %}</div>
       {% else %}<p class="empty">No WireGuard clients have been created yet.</p>{% endif %}

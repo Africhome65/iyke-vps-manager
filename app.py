@@ -286,7 +286,15 @@ def create_app(test_config=None):
             status = {"wireguard": {"installed": False, "interfaces": []},
                       "openvpn": {"installed": False, "instances": []}}
             flash(str(exc), "error")
-        return render_template("vpn.html", vpn=status)
+        peers = []
+        if status.get("wireguard", {}).get("installed"):
+            try:
+                peers = json.loads(run_helper("wireguard_peers") or "[]")
+                if not isinstance(peers, list):
+                    peers = []
+            except (RuntimeError, json.JSONDecodeError) as exc:
+                flash(str(exc), "error")
+        return render_template("vpn.html", vpn=status, peers=peers)
 
 
     @app.post("/vpn/wireguard/install")
@@ -315,17 +323,6 @@ def create_app(test_config=None):
             flash(str(exc), "error")
         return redirect(url_for("vpn_services"))
 
-
-    @app.get("/vpn/wireguard/peers")
-    @login_required
-    def wireguard_peers():
-        try:
-            peers = json.loads(run_helper("wireguard_peers") or "[]")
-        except (RuntimeError, json.JSONDecodeError) as exc:
-            peers = []
-            flash(str(exc), "error")
-        return render_template("vpn.html", vpn={"wireguard": {"installed": True, "interfaces": []},
-            "openvpn": {"installed": False, "instances": []}}, peers=peers)
 
     @app.post("/vpn/wireguard/peers")
     @login_required

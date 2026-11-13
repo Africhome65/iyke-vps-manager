@@ -152,7 +152,7 @@ def test_wireguard_service_validates_state():
 
 def test_wireguard_endpoint_validation():
     assert helper._valid_endpoint("vpn.example.com:51820")
-    assert helper._valid_endpoint("203.0.113.5:51820")
+    assert helper._valid_endpoint("8.8.8.8:51820")
     assert not helper._valid_endpoint("vpn.example.com")
     assert not helper._valid_endpoint("vpn.example.com:99999")
     assert not helper._valid_endpoint("https://vpn.example.com:51820")
