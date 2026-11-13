@@ -15,7 +15,7 @@ The first release provides:
 - WireGuard client creation and revocation with unique tunnel addresses
 - Authenticated, non-cacheable client profile downloads and QR-code display
 
-WireGuard installation creates a private server configuration but does not automatically start the interface, change firewall rules, enable IP forwarding, or configure internet egress. The panel attempts to detect the public IPv4 address of the VPS hosting that installation and pre-fills it as the client endpoint on UDP port 51820. Administrators can replace it with their own DNS name or another public address. Detection requires outbound HTTPS access to api.ipify.org; if unavailable, the endpoint can be entered manually. Each installation detects its own VPS address and keeps its own keys and client registry separate. Client profiles currently route only the private VPN subnet (10.66.0.0/24); full-tunnel internet access is not configured. OpenVPN discovery remains read-only and its installation/client management are planned separately. Xray-core service discovery is also read-only at this stage; it reports whether the Xray binary and system service are present without reading configuration files or exposing credentials. VLESS/VMess installation, per-VPS domain/TLS or REALITY setup, and client management are planned as separately reviewed changes.
+WireGuard installation creates a private server configuration but does not automatically start the interface, change firewall rules, enable IP forwarding, or configure internet egress. The panel attempts to detect the public IPv4 address of the VPS hosting that installation and pre-fills it as the client endpoint on UDP port 51820. Administrators can replace it with their own DNS name or another public address. Detection requires outbound HTTPS access to api.ipify.org; if unavailable, the endpoint can be entered manually. Each installation detects its own VPS address and keeps its own keys and client registry separate. Client profiles currently route only the private VPN subnet (10.66.0.0/24); full-tunnel internet access is not configured. OpenVPN discovery remains read-only and its installation/client management are planned separately. Xray-core can now be installed from the panel on a clean Ubuntu/Debian host using the official XTLS/Xray-install script pinned to an immutable upstream commit. The installer verifies the downloaded Xray release archive against its published SHA256 digest. The helper refuses to overwrite an existing Xray binary, service, configuration directory or `xray` account. Installation runs in a bounded transient systemd service so the web app's `ProtectSystem=strict` sandbox remains intact. This foundation does not configure VLESS/VMess inbounds, domain/DNS, TLS certificates, REALITY, firewall rules or client profiles; those are separate reviewed steps. Xray status discovery does not read configuration files or expose credentials.
 
 ## Requirements
 
@@ -53,7 +53,8 @@ For safety, the panel lists and modifies only Linux accounts created through Iyk
 
 - The application runs as an unprivileged system user.
 - Only the root-owned helper at `/usr/local/sbin/iyke-vps-helper` is allowed through sudo.
-- WireGuard package operations are launched as fixed, short-lived systemd system services so APT can write package files without weakening the web service's `ProtectSystem=strict` sandbox.
+- WireGuard package operations and Xray installation are launched as fixed, bounded systemd system services so system package and installation tasks can run without weakening the web service's `ProtectSystem=strict` sandbox.
+- Xray installation uses the official upstream installer pinned to an immutable commit and refuses to replace existing Xray files or accounts.
 - The helper accepts a small fixed set of actions, validates usernames and expiry dates, and checks every modification against its root-owned managed-account registry.
 - Passwords are passed to the helper over stdin, never as command-line arguments.
 - CSRF protection, secure cookie defaults, login throttling and audit logging are enabled.
@@ -79,7 +80,7 @@ The development server is not intended for production. Run automated checks with
 ## Roadmap
 
 1. Foundation, dashboard, secure authentication and SSH account operations
-2. Xray-core installation and VLESS/VMess client management; OpenVPN installation, certificate-based client creation/revocation and secure .ovpn downloads; WireGuard routing/NAT and firewall setup
+2. Xray VLESS/VMess configuration, per-VPS domain/TLS or REALITY setup and client management; OpenVPN installation, certificate-based client creation/revocation and secure .ovpn downloads; WireGuard routing/NAT and firewall setup
 3. Domain and TLS lifecycle management
 4. Usage limits, backups, monitoring improvements and notifications
 5. Integration tests, hardening and deployment documentation

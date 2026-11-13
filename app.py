@@ -310,6 +310,19 @@ def create_app(test_config=None):
                                public_endpoint=public_endpoint)
 
 
+
+    @app.post("/vpn/xray/install")
+    @login_required
+    def install_xray():
+        try:
+            result = json.loads(run_helper("xray_install", timeout=330) or "{}")
+            audit("xray_installed", "Installed Xray-core using the pinned official installer")
+            flash("Xray-core is installed. No VLESS/VMess listeners or firewall rules were configured.", "success")
+            flash(f"Xray service state: {result.get('service', 'unknown')}", "success")
+        except (RuntimeError, json.JSONDecodeError) as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("vpn_services"))
+
     @app.post("/vpn/wireguard/install")
     @login_required
     def install_wireguard():

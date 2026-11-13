@@ -694,6 +694,100 @@ def wireguard_revoke_peer(name):
         return _wireguard_revoke_peer_unlocked(name)
 
 
+
+XRAY_INSTALLER_COMMIT = "1bce9c3a9630d72521643159080017d1c001bc71"
+XRAY_INSTALLER_URL = (
+    "https://raw.githubusercontent.com/XTLS/Xray-install/"
+    + XRAY_INSTALLER_COMMIT + "/install-release.sh"
+)
+
+
+def xray_install():
+    """Install official Xray-core on a clean Ubuntu/Debian host; preserve existing installs."""
+    try:
+        with open("/etc/os-release", encoding="utf-8") as source:
+            os_release = source.read()
+    except OSError:
+        fail("Unable to identify this operating system")
+    os_id = next(
+        (line.split("=", 1)[1].strip().strip('"').strip("'")
+         for line in os_release.splitlines() if line.startswith("ID=")),
+        "",
+    )
+    if os_id not in {"ubuntu", "debian"}:
+        fail("Xray installation supports Ubuntu and Debian only")
+
+    systemd_run = shutil.which("systemd-run")
+    if not systemd_run:
+        fail("systemd-run is unavailable; cannot safely install Xray from the panel")
+
+    protected_paths = (
+        "/usr/local/bin/xray",
+        "/etc/systemd/system/xray.service",
+        "/etc/systemd/system/xray@.service",
+        "/usr/local/etc/xray",
+        "/usr/local/share/xray",
+        "/var/log/xray",
+    )
+    if any(os.path.lexists(path) for path in protected_paths):
+        fail("An Xray installation or configuration already exists; refusing to overwrite it")
+
+    account = subprocess.run(
+        ["getent", "passwd", "xray"], text=True, capture_output=True,
+        check=False, timeout=10,
+    )
+    if account.returncode == 0:
+        fail("The xray system account already exists; refusing to reuse it")
+    if account.returncode != 2:
+        fail("Unable to check whether the xray system account already exists")
+
+    # The installer revision is immutable; its release download routine verifies
+    # the Xray archive against the upstream published SHA256 digest.
+    shell_script = (
+        "set -euo pipefail; "
+        "tmp=$(mktemp); trap 'rm -f \"$tmp\"' EXIT; "
+        "curl -fsSL --retry 3 --connect-timeout 15 --max-time 60 "
+        f"'{XRAY_INSTALLER_URL}' -o \"$tmp\"; "
+        "bash \"$tmp\" install --without-logfiles"
+    )
+    unit = f"iyke-vps-manager-xray-install-{os.getpid()}-{os.urandom(4).hex()}"
+    command = [
+        systemd_run, "--quiet", "--wait", "--pipe", "--collect",
+        f"--unit={unit}", "--property=RuntimeMaxSec=300",
+        "--setenv=DEBIAN_FRONTEND=noninteractive",
+        "/bin/bash", "-c", shell_script,
+    ]
+    try:
+        result = subprocess.run(
+            command, text=True, capture_output=True, check=True, timeout=330
+        )
+    except subprocess.TimeoutExpired:
+        fail("Xray installation timed out")
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "Xray installation failed").strip()
+        fail(f"Xray installation failed: {detail[-500:]}")
+
+    if not os.path.isfile("/usr/local/bin/xray") or not os.access("/usr/local/bin/xray", os.X_OK):
+        fail("Xray installer completed without installing the expected binary")
+    if not os.path.isfile("/etc/systemd/system/xray.service"):
+        fail("Xray installer completed without creating its system service")
+    return {
+        "installed": True,
+        "service": _unit_state("xray.service"),
+        "installer": "official-pinned",
+        "firewall_changed": False,
+    }
+
+
+def handle_xray_action(request):
+    if request.get("action") != "xray_install":
+        return False
+    if set(request) != {"action"}:
+        fail("Unexpected request fields")
+    print(json.dumps(xray_install()))
+    return True
+
+
 def handle_vpn_action(request):
     action = request.get("action")
     if action == "wireguard_public_endpoint":
@@ -752,6 +846,11 @@ def main():
         if handle_vpn_action(request):
             return
         fail("Unsupported WireGuard action")
+
+    if action.startswith("xray_"):
+        if handle_xray_action(request):
+            return
+        fail("Unsupported Xray action")
 
     with registry_lock():
         managed = load_registry()
