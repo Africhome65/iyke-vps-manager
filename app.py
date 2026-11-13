@@ -110,11 +110,15 @@ def create_app(test_config=None):
                        (current_user.username if current_user.is_authenticated else "system",
                         action, detail[:240], datetime.utcnow().isoformat(timespec="seconds")))
 
-    def run_helper(*args, input_text=None):
+    def run_helper(action, **payload):
+        # The privileged executable receives a single strict JSON request on stdin.
+        # No user-controlled arguments are ever passed through sudo's command line.
+        request_data = {"action": action, **payload}
         try:
             result = subprocess.run(
-                ["sudo", "-n", app.config["HELPER"], *args],
-                input=input_text, text=True, capture_output=True, timeout=20, check=False
+                ["sudo", "-n", app.config["HELPER"]],
+                input=json.dumps(request_data, separators=(",", ":")),
+                text=True, capture_output=True, timeout=30, check=False
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise RuntimeError("Privileged helper unavailable or timed out") from exc
@@ -235,7 +239,7 @@ def create_app(test_config=None):
             return redirect(url_for("users"))
         temporary_password = secrets.token_urlsafe(18)
         try:
-            run_helper("create", username, expiry, input_text=temporary_password + "\n")
+            run_helper("create", username=username, expiry=expiry, password=temporary_password)
             audit("ssh_user_created", f"Created Linux account {username}; expiry {expiry}")
             return render_template("created.html", username=username, password=temporary_password,
                                    expiry=expiry)
@@ -253,7 +257,7 @@ def create_app(test_config=None):
             expiry_date = date.fromisoformat(expiry)
             if expiry_date <= date.today():
                 raise ValueError
-            run_helper("expire", username, expiry)
+            run_helper("expire", username=username, expiry=expiry)
             audit("ssh_user_expiry_changed", f"Changed expiry for {username} to {expiry}")
             flash(f"Expiry updated for {username}.", "success")
         except (ValueError, RuntimeError) as exc:
@@ -266,7 +270,7 @@ def create_app(test_config=None):
         if not USERNAME_RE.fullmatch(username) or username in {"root", "nobody"}:
             abort(400)
         try:
-            run_helper("delete", username)
+            run_helper("delete", username=username)
             audit("ssh_user_deleted", f"Deleted Linux account {username}")
             flash(f"Account {username} deleted.", "success")
         except RuntimeError as exc:
