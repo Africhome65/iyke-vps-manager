@@ -320,98 +320,7 @@ def wireguard_install():
             os_release = source.read()
     except OSError:
         fail("Unable to identify this operating system")
-    if not re.search(r'^ID=(ubuntu|debian)    if os.geteuid() != 0:
-        fail("This helper must run as root")
-    raw = sys.stdin.buffer.read(MAX_REQUEST_BYTES + 1)
-    if len(raw) > MAX_REQUEST_BYTES:
-        fail("Request is too large")
-    try:
-        request = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        fail("Invalid JSON request")
-    if not isinstance(request, dict) or not isinstance(request.get("action"), str):
-        fail("Invalid request")
-    action = request["action"]
-
-    if action.startswith("wireguard_"):
-        if handle_vpn_action(request):
-            return
-        fail("Unsupported WireGuard action")
-
-    with registry_lock():
-        managed = load_registry()
-        if action == "list":
-            if set(request) != {"action"}:
-                fail("Unexpected request fields")
-            print(json.dumps(list_accounts(managed)))
-            return
-
-        if action == "vpn_status":
-            if set(request) != {"action"}:
-                fail("Unexpected request fields")
-            print(json.dumps(vpn_status()))
-            return
-
-        if action == "create":
-            if set(request) != {"action", "username", "expiry", "password"}:
-                fail("Unexpected request fields")
-            name = valid_name(request["username"])
-            expiry = valid_expiry(request["expiry"])
-            password = request["password"]
-            if (not isinstance(password, str) or len(password) < 20 or len(password) > 256
-                    or any(ch in password for ch in "\r\n:")):
-                fail("Invalid generated password")
-            if name in managed or account_exists(name):
-                fail("An account with that username already exists")
-            run(["useradd", "--create-home", "--shell", "/bin/bash",
-                 "--expiredate", expiry, name])
-            try:
-                created_uid = int(run(["id", "-u", name]))
-                if created_uid < SYSTEM_UID_MIN:
-                    fail("Created account has an unexpected system UID")
-                run(["chpasswd"], f"{name}:{password}\n")
-                save_registry({**managed, name: created_uid})
-            except SystemExit:
-                try:
-                    run(["userdel", "--remove", name])
-                except SystemExit:
-                    pass
-                raise
-            print("created")
-            return
-
-        if action == "expire":
-            if set(request) != {"action", "username", "expiry"}:
-                fail("Unexpected request fields")
-            name = valid_name(request["username"], must_exist=True)
-            current_uid = int(run(["id", "-u", name]))
-            if managed.get(name) != current_uid:
-                fail("This account is not managed by Iyke VPS Manager")
-            expiry = valid_expiry(request["expiry"])
-            run(["chage", "--expiredate", expiry, name])
-            print("updated")
-            return
-
-        if action == "delete":
-            if set(request) != {"action", "username"}:
-                fail("Unexpected request fields")
-            name = valid_name(request["username"], must_exist=True)
-            current_uid = int(run(["id", "-u", name]))
-            if managed.get(name) != current_uid:
-                fail("This account is not managed by Iyke VPS Manager")
-            run(["userdel", "--remove", name])
-            updated_registry = dict(managed)
-            updated_registry.pop(name)
-            save_registry(updated_registry)
-            print("deleted")
-            return
-
-    fail("Unsupported action")
-
-
-if __name__ == "__main__":
-    main()
-, os_release, re.MULTILINE):
+    if not re.search(r'^ID=(ubuntu|debian)$', os_release, re.MULTILINE):
         fail("WireGuard installation supports Ubuntu and Debian only")
     directory = "/etc/wireguard"
     if os.path.lexists(os.path.join(directory, "wg0.conf")):
@@ -449,8 +358,13 @@ if __name__ == "__main__":
 def wireguard_service(state):
     if state not in {"start", "stop"}:
         fail("Invalid WireGuard service state")
-    if not os.path.isfile("/etc/wireguard/wg0.conf"):
+    config = "/etc/wireguard/wg0.conf"
+    try:
+        info = os.lstat(config)
+    except OSError:
         fail("Install and configure WireGuard before controlling the service")
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or stat.S_IMODE(info.st_mode) & 0o077:
+        fail("WireGuard server configuration has unsafe ownership or permissions")
     if state == "start":
         run(["systemctl", "enable", "--now", "wg-quick@wg0.service"])
     else:
@@ -486,6 +400,11 @@ def main():
     if not isinstance(request, dict) or not isinstance(request.get("action"), str):
         fail("Invalid request")
     action = request["action"]
+
+    if action.startswith("wireguard_"):
+        if handle_vpn_action(request):
+            return
+        fail("Unsupported WireGuard action")
 
     with registry_lock():
         managed = load_registry()
