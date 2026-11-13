@@ -260,7 +260,12 @@ def vpn_status():
                     "name": instance,
                     "status": _unit_state(f"{unit_prefix}{instance}.service")
                 })
-    return {"wireguard": wireguard, "openvpn": openvpn}
+    xray_binary = shutil.which("xray")
+    xray = {
+        "installed": xray_binary is not None,
+        "service": _unit_state("xray.service") if xray_binary else "not-installed",
+    }
+    return {"wireguard": wireguard, "openvpn": openvpn, "xray": xray}
 
 
 
