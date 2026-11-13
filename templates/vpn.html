@@ -2,7 +2,7 @@
 {% block title %}VPN services · Iyke VPS Manager{% endblock %}
 {% block content %}
 <div class="page-heading"><div><div class="eyebrow">NETWORK SERVICES</div><h1>VPN services</h1><p class="muted">Install and manage supported VPN services on this VPS.</p></div></div>
-<div class="notice"><b>WireGuard setup safety</b><span>Client profiles use split-tunnel routing for the private VPN subnet only. Public internet routing, firewall/NAT rules and IP forwarding are not configured automatically. Enter the VPS public IP or DNS name and UDP port that you intend to use.</span></div>
+<div class="notice"><b>WireGuard setup safety</b><span>Client profiles use split-tunnel routing for the private VPN subnet only. Public internet routing, firewall/NAT rules and IP forwarding are not configured automatically. This installation detects its own public IPv4 address where possible; you can override it with a DNS name or another public address.</span>{% if public_endpoint %}<span><b>Detected endpoint for this VPS:</b> {{ public_endpoint }}</span>{% else %}<span>Public IP detection is unavailable. You can enter the endpoint manually when creating a client.</span>{% endif %}</div>
 <div class="vpn-grid">
   <section class="panel">
     <div class="section-heading"><div><h2>WireGuard</h2><p class="muted">Modern, lightweight VPN</p></div><span class="vpn-state {{ 'available' if vpn.wireguard.installed else 'missing' }}">{{ 'Installed' if vpn.wireguard.installed else 'Not installed' }}</span></div>
@@ -17,7 +17,7 @@
       <form method="post" action="{{ url_for('create_wireguard_peer') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <label for="wg-name">Client name</label><input id="wg-name" name="name" maxlength="31" pattern="[a-z][a-z0-9_-]{0,30}" required placeholder="phone01">
-        <label for="wg-endpoint">Server endpoint (public IP or hostname:UDP port)</label><input id="wg-endpoint" name="endpoint" maxlength="255" required placeholder="vpn.example.com:51820">
+        <label for="wg-endpoint">Server endpoint (auto-detected for this VPS; editable)</label><input id="wg-endpoint" name="endpoint" maxlength="255" value="{{ public_endpoint }}" required placeholder="vpn.example.com:51820">
         <button type="submit">Create client profile</button>
       </form>
       <p class="muted">Each client gets a unique private key, tunnel address, downloadable .conf file and QR code. Keep profiles secret.</p>

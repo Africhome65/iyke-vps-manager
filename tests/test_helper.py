@@ -145,6 +145,31 @@ def test_wireguard_install_refuses_existing_config(monkeypatch, tmp_path):
         helper.wireguard_install()
 
 
+def test_wireguard_public_endpoint_detects_global_ipv4(monkeypatch):
+    class Response:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def read(self, limit):
+            assert limit == 64
+            return b"8.8.8.8"
+
+    monkeypatch.setattr(helper.urllib.request, "urlopen",
+                        lambda request, timeout: Response())
+    result = helper.wireguard_public_endpoint()
+    assert result == {"host": "8.8.8.8", "port": 51820,
+                      "endpoint": "8.8.8.8:51820"}
+
+
+def test_wireguard_public_endpoint_rejects_unavailable_lookup(monkeypatch):
+    def unavailable(*args, **kwargs):
+        raise OSError("offline")
+    monkeypatch.setattr(helper.urllib.request, "urlopen", unavailable)
+    with pytest.raises(SystemExit):
+        helper.wireguard_public_endpoint()
+
+
 def test_wireguard_service_validates_state():
     with pytest.raises(SystemExit):
         helper.wireguard_service("restart")

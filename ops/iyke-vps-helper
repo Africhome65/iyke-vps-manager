@@ -11,6 +11,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import urllib.request
 from contextlib import contextmanager
 
 NAME = re.compile(r"^[a-z_][a-z0-9_-]{0,30}\$?$")
@@ -357,6 +358,23 @@ def wireguard_install():
             "service": "inactive", "firewall_changed": False}
 
 
+def wireguard_public_endpoint():
+    """Discover this VPS public IPv4 address for client endpoint configuration."""
+    try:
+        request = urllib.request.Request(
+            "https://api.ipify.org",
+            headers={"User-Agent": "Iyke-VPS-Manager/1.0"},
+        )
+        with urllib.request.urlopen(request, timeout=5) as response:
+            raw = response.read(64).decode("ascii").strip()
+        address = ipaddress.ip_address(raw)
+    except (OSError, UnicodeDecodeError, ValueError):
+        fail("Unable to detect this VPS public IP; enter its public IP or DNS name manually")
+    if not isinstance(address, ipaddress.IPv4Address) or not address.is_global:
+        fail("The detected address is not a public IPv4 address; enter the VPS public IP or DNS name manually")
+    return {"host": str(address), "port": 51820, "endpoint": f"{address}:51820"}
+
+
 def wireguard_service(state):
     if state not in {"start", "stop"}:
         fail("Invalid WireGuard service state")
@@ -658,6 +676,11 @@ def wireguard_revoke_peer(name):
 
 def handle_vpn_action(request):
     action = request.get("action")
+    if action == "wireguard_public_endpoint":
+        if set(request) != {"action"}:
+            fail("Unexpected request fields")
+        print(json.dumps(wireguard_public_endpoint()))
+        return True
     if action == "wireguard_install":
         if set(request) != {"action"}:
             fail("Unexpected request fields")
