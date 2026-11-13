@@ -119,6 +119,14 @@ def test_vpn_status_reports_missing_software(monkeypatch):
     }
 
 
+def test_vpn_status_reports_xray_binary_and_service(monkeypatch):
+    monkeypatch.setattr(helper.shutil, "which",
+                        lambda command: "/usr/local/bin/xray" if command == "xray" else None)
+    monkeypatch.setattr(helper, "_unit_state", lambda unit: "active")
+    status = helper.vpn_status()
+    assert status["xray"] == {"installed": True, "service": "active"}
+
+
 def test_vpn_status_reports_wireguard_interfaces(monkeypatch):
     monkeypatch.setattr(helper.shutil, "which",
                         lambda command: "/usr/bin/wg" if command == "wg" else None)
