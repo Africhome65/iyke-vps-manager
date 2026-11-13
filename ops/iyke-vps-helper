@@ -313,6 +313,27 @@ def _atomic_secret_file(path, content, mode=0o600):
                 pass
 
 
+def _run_apt_task(apt_get, arguments, task):
+    """Run a fixed APT task in a transient system service outside the web sandbox."""
+    systemd_run = shutil.which("systemd-run")
+    if not systemd_run:
+        fail("systemd-run is unavailable; cannot safely install WireGuard from the panel")
+    unit = f"iyke-vps-manager-apt-{task}-{os.getpid()}-{os.urandom(4).hex()}"
+    command = [
+        systemd_run, "--quiet", "--wait", "--pipe", "--collect",
+        f"--unit={unit}", "--property=RuntimeMaxSec=240",
+        "--setenv=DEBIAN_FRONTEND=noninteractive",
+        apt_get, *arguments,
+    ]
+    try:
+        subprocess.run(command, text=True, capture_output=True, check=True, timeout=270)
+    except subprocess.TimeoutExpired:
+        fail(f"WireGuard package {task} timed out")
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "APT task failed").strip()
+        fail(f"WireGuard package {task} failed: {detail[-500:]}")
+
+
 def wireguard_install():
     """Install WireGuard and create a private server config; do not alter firewall or start it."""
     if not os.path.exists("/etc/os-release"):
@@ -328,17 +349,11 @@ def wireguard_install():
     if os.path.lexists(os.path.join(directory, "wg0.conf")):
         fail("A wg0.conf already exists; refusing to overwrite it")
     _secure_wireguard_dir()
-    if not shutil.which("apt-get"):
+    apt_get = shutil.which("apt-get")
+    if not apt_get:
         fail("APT package manager is unavailable")
-    try:
-        subprocess.run(["apt-get", "update"], text=True, capture_output=True,
-                       check=True, timeout=240)
-        subprocess.run(["apt-get", "install", "-y", "wireguard"], text=True,
-                       capture_output=True, check=True, timeout=240)
-    except subprocess.TimeoutExpired:
-        fail("WireGuard package installation timed out")
-    except subprocess.CalledProcessError as exc:
-        fail((exc.stderr or "WireGuard package installation failed").strip()[-500:])
+    _run_apt_task(apt_get, ["update"], "update")
+    _run_apt_task(apt_get, ["install", "-y", "wireguard"], "install")
     if not shutil.which("wg"):
         fail("WireGuard installation did not provide the wg command")
     private_key = run(["wg", "genkey"])

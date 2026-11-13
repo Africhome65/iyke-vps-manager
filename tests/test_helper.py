@@ -249,3 +249,51 @@ def test_wireguard_service_start_is_not_persistent(monkeypatch):
     monkeypatch.setattr(helper, "run", lambda args, *a, **k: calls.append(args))
     assert helper.wireguard_service("start")["requested_state"] == "start"
     assert calls == [["systemctl", "start", "wg-quick@wg0.service"]]
+
+
+
+def test_apt_task_runs_in_transient_system_service(monkeypatch):
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return helper.subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper.shutil, "which",
+                        lambda name: "/usr/bin/systemd-run" if name == "systemd-run" else None)
+    monkeypatch.setattr(helper.subprocess, "run", fake_run)
+    helper._run_apt_task("/usr/bin/apt-get", ["update"], "update")
+
+    command, kwargs = calls[0]
+    assert command[0] == "/usr/bin/systemd-run"
+    assert "--wait" in command
+    assert "--pipe" in command
+    assert "--collect" in command
+    assert "--property=RuntimeMaxSec=240" in command
+    assert "--setenv=DEBIAN_FRONTEND=noninteractive" in command
+    assert command[-2:] == ["/usr/bin/apt-get", "update"]
+    assert kwargs["check"] is True
+    assert kwargs["timeout"] == 270
+
+
+def test_apt_task_reports_system_service_failure(monkeypatch, capsys):
+    def failed_run(command, **kwargs):
+        raise helper.subprocess.CalledProcessError(
+            100, command, output="", stderr="APT package operation failed"
+        )
+
+    monkeypatch.setattr(helper.shutil, "which",
+                        lambda name: "/usr/bin/systemd-run" if name == "systemd-run" else None)
+    monkeypatch.setattr(helper.subprocess, "run", failed_run)
+    with pytest.raises(SystemExit) as exc:
+        helper._run_apt_task("/usr/bin/apt-get", ["install", "-y", "wireguard"], "install")
+    assert exc.value.code == 1
+    assert "APT package operation failed" in capsys.readouterr().err
+
+
+def test_apt_task_requires_systemd_run(monkeypatch, capsys):
+    monkeypatch.setattr(helper.shutil, "which", lambda name: None)
+    with pytest.raises(SystemExit) as exc:
+        helper._run_apt_task("/usr/bin/apt-get", ["update"], "update")
+    assert exc.value.code == 1
+    assert "systemd-run is unavailable" in capsys.readouterr().err

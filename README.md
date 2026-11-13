@@ -53,6 +53,7 @@ For safety, the panel lists and modifies only Linux accounts created through Iyk
 
 - The application runs as an unprivileged system user.
 - Only the root-owned helper at `/usr/local/sbin/iyke-vps-helper` is allowed through sudo.
+- WireGuard package operations are launched as fixed, short-lived systemd system services so APT can write package files without weakening the web service's `ProtectSystem=strict` sandbox.
 - The helper accepts a small fixed set of actions, validates usernames and expiry dates, and checks every modification against its root-owned managed-account registry.
 - Passwords are passed to the helper over stdin, never as command-line arguments.
 - CSRF protection, secure cookie defaults, login throttling and audit logging are enabled.
