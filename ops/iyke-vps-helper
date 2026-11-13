@@ -867,7 +867,7 @@ if __name__ == "__main__":
                              capture_output=True, check=False, timeout=10)
     if account.returncode == 0:
         fail("The xray system account already exists; refusing to reuse it")
-    if account.returncode not in {1, 2}:
+    if account.returncode != 2:
         fail("Unable to check whether the xray system account already exists")
 
     # The upstream installer is pinned to an immutable commit. It downloads the
