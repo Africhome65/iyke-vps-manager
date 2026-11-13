@@ -5,6 +5,7 @@ import fcntl
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -205,6 +206,62 @@ def list_accounts(managed):
     return rows
 
 
+
+def _unit_state(unit):
+    try:
+        result = subprocess.run(["systemctl", "is-active", unit], text=True,
+                                capture_output=True, check=False, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return "unknown"
+    state = result.stdout.strip()
+    return state if state in {"active", "inactive", "failed", "activating",
+                              "deactivating", "reloading"} else "unknown"
+
+
+def vpn_status():
+    """Return service metadata only; never expose private keys or config contents."""
+    wireguard_installed = shutil.which("wg") is not None
+    wireguard = {"installed": wireguard_installed, "interfaces": []}
+    if wireguard_installed:
+        try:
+            result = subprocess.run(["wg", "show", "interfaces"], text=True,
+                                    capture_output=True, check=False, timeout=5)
+            if result.returncode == 0:
+                for interface in result.stdout.split():
+                    if re.fullmatch(r"[A-Za-z0-9_=+.-]{1,15}", interface):
+                        wireguard["interfaces"].append({
+                            "name": interface,
+                            "status": _unit_state(f"wg-quick@{interface}.service")
+                        })
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+    openvpn_installed = shutil.which("openvpn") is not None
+    openvpn = {"installed": openvpn_installed, "instances": []}
+    if openvpn_installed:
+        for directory, unit_prefix in (
+            ("/etc/openvpn/server", "openvpn-server@"),
+            ("/etc/openvpn", "openvpn@"),
+        ):
+            try:
+                entries = sorted(os.scandir(directory), key=lambda entry: entry.name)
+            except OSError:
+                continue
+            for entry in entries:
+                if (not entry.name.endswith(".conf")
+                        or not entry.is_file(follow_symlinks=False)):
+                    continue
+                instance = entry.name[:-5]
+                if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", instance):
+                    continue
+                openvpn["instances"].append({
+                    "name": instance,
+                    "status": _unit_state(f"{unit_prefix}{instance}.service")
+                })
+    return {"wireguard": wireguard, "openvpn": openvpn}
+
+
+
 def main():
     if os.geteuid() != 0:
         fail("This helper must run as root")
@@ -225,6 +282,12 @@ def main():
             if set(request) != {"action"}:
                 fail("Unexpected request fields")
             print(json.dumps(list_accounts(managed)))
+            return
+
+        if action == "vpn_status":
+            if set(request) != {"action"}:
+                fail("Unexpected request fields")
+            print(json.dumps(vpn_status()))
             return
 
         if action == "create":
