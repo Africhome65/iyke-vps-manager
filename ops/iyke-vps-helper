@@ -715,6 +715,48 @@ def _valid_xray_domain(value):
     return value
 
 
+def _xray_validate_certificate(domain):
+    """Validate Certbot certificate/key ownership, hostname, validity and key pairing."""
+    domain = _valid_xray_domain(domain)
+    live_dir = f"/etc/letsencrypt/live/{domain}"
+    cert_path = os.path.join(live_dir, "fullchain.pem")
+    key_path = os.path.join(live_dir, "privkey.pem")
+    resolved = []
+    for path, secret in ((cert_path, False), (key_path, True)):
+        try:
+            real_path = os.path.realpath(path, strict=True)
+            info = os.stat(real_path, follow_symlinks=False)
+        except OSError:
+            fail("A valid Let's Encrypt certificate and private key are required for this hostname")
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_nlink < 1:
+            fail("Certificate files must be regular root-owned files")
+        mode = stat.S_IMODE(info.st_mode)
+        if mode & 0o022 or (secret and mode & 0o077):
+            fail("Certificate permissions are too broad; refusing to continue")
+        resolved.append(real_path)
+
+    cert_path, key_path = resolved
+    check = subprocess.run(
+        ["openssl", "x509", "-in", cert_path, "-noout", "-checkhost", domain, "-checkend", "86400"],
+        text=True, capture_output=True, check=False, timeout=10,
+    )
+    if check.returncode != 0:
+        fail("The TLS certificate is expired, near expiry, or does not match this hostname")
+
+    cert_pub = subprocess.run(
+        ["openssl", "x509", "-in", cert_path, "-pubkey", "-noout"],
+        text=True, capture_output=True, check=False, timeout=10,
+    )
+    key_pub = subprocess.run(
+        ["openssl", "pkey", "-in", key_path, "-pubout"],
+        text=True, capture_output=True, check=False, timeout=10,
+    )
+    if (cert_pub.returncode != 0 or key_pub.returncode != 0
+            or not cert_pub.stdout or cert_pub.stdout != key_pub.stdout):
+        fail("TLS certificate and private key do not match")
+    return {"certificate": cert_path, "private_key": key_path, "hostname": domain}
+
+
 def _xray_listener_config(vless_clients, vmess_clients):
     """Build a minimal Xray config with separate loopback-only WebSocket inbounds."""
     for group in (vless_clients, vmess_clients):
