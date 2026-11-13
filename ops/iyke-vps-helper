@@ -752,7 +752,7 @@ def _xray_validate_certificate(domain):
         text=True, capture_output=True, check=False, timeout=10,
     )
     if (cert_pub.returncode != 0 or key_pub.returncode != 0
-            or not cert_pub.stdout or cert_pub.stdout != key_pub.stdout):
+            or not cert_pub.stdout.strip() or cert_pub.stdout.strip() != key_pub.stdout.strip()):
         fail("TLS certificate and private key do not match")
     return {"certificate": cert_path, "private_key": key_path, "hostname": domain}
 
