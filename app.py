@@ -311,6 +311,18 @@ def create_app(test_config=None):
 
 
 
+    @app.post("/vpn/xray/preflight")
+    @login_required
+    def xray_preflight_route():
+        domain = request.form.get("domain", "").strip()
+        try:
+            result = json.loads(run_helper("xray_preflight", domain=domain) or "{}")
+            audit("xray_preflight_passed", f"Readiness checks passed for {result.get('domain', '')}")
+            flash(f"Readiness checks passed for {result.get('domain', '')}. No server settings were changed.", "success")
+        except (RuntimeError, json.JSONDecodeError) as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("vpn_services"))
+
     @app.post("/vpn/xray/install")
     @login_required
     def install_xray():
