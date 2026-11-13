@@ -96,3 +96,27 @@ def test_invalid_username_is_rejected_before_helper(client, monkeypatch):
     with client.session_transaction() as session:
         flashes = session.get("_flashes", [])
     assert any("valid, non-system Linux username" in message for _, message in flashes)
+
+
+
+def test_vpn_status_page_requires_login_and_displays_services(client, monkeypatch):
+    response = client.get("/vpn")
+    assert response.status_code == 302
+    login(client)
+
+    payload = {
+        "wireguard": {"installed": True, "interfaces": [{"name": "wg0", "status": "active"}]},
+        "openvpn": {"installed": False, "instances": []},
+    }
+
+    def fake_run(args, **kwargs):
+        assert args == ["sudo", "-n", "/test/helper"]
+        return subprocess.CompletedProcess(args, 0, stdout=__import__("json").dumps(payload), stderr="")
+
+    monkeypatch.setattr("app.subprocess.run", fake_run)
+    response = client.get("/vpn")
+    assert response.status_code == 200
+    assert b"WireGuard" in response.data
+    assert b"wg0" in response.data
+    assert b"OpenVPN" in response.data
+    assert b"Not installed" in response.data
