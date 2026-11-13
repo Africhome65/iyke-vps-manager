@@ -11,6 +11,7 @@
 <div class="content-grid">
   <section class="panel"><div class="section-heading"><div><h2>Quick actions</h2><p class="muted">Common server administration tasks.</p></div></div>
     <a class="action-card" href="{{ url_for('users') }}"><span class="action-icon">SSH</span><span><b>Manage SSH users</b><small>Create accounts, change expiry and remove users.</small></span><b>→</b></a>
+    <a class="action-card" href="{{ url_for('vpn_services') }}"><span class="action-icon">VPN</span><span><b>VPN services</b><small>Check WireGuard and OpenVPN installation and service status.</small></span><b>→</b></a>
   </section>
   <section class="panel"><div class="section-heading"><div><h2>Recent activity</h2><p class="muted">Administrator actions recorded by the panel.</p></div></div>
     {% if audit_rows %}<div class="activity-list">{% for item in audit_rows %}<div class="activity"><span class="activity-dot"></span><div><b>{{ item.action|replace('_',' ')|title }}</b><small>{{ item.detail }} · {{ item.created_at }}</small></div></div>{% endfor %}</div>{% else %}<p class="muted">No activity recorded yet.</p>{% endif %}
