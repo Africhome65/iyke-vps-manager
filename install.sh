@@ -63,11 +63,15 @@ chmod -R u=rwX,g=rX,o= "$APP_DIR"
 chown -R "$SERVICE_USER":"$SERVICE_USER" "$DATA_DIR"
 systemctl daemon-reload
 systemctl enable --now iyke-vps-manager
-for attempt in $(seq 1 15); do
-  if systemctl is-active --quiet iyke-vps-manager; then break; fi
+ready=0
+for attempt in $(seq 1 20); do
+  if systemctl is-active --quiet iyke-vps-manager && python3 -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8787/health", timeout=2)' >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
   sleep 2
 done
-if systemctl is-active --quiet iyke-vps-manager; then
+if [[ "$ready" == "1" ]]; then
   # The first administrator is now stored as a password hash in SQLite.
   # Remove the one-time plaintext bootstrap secret from future service environments.
   sed -i '/^IYKE_BOOTSTRAP_PASSWORD=/d' "$ETC_DIR/manager.env"
