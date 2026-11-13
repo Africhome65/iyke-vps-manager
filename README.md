@@ -15,7 +15,7 @@ The first release provides:
 - WireGuard client creation and revocation with unique tunnel addresses
 - Authenticated, non-cacheable client profile downloads and QR-code display
 
-WireGuard installation creates a private server configuration but does not automatically start the interface, change firewall rules, enable IP forwarding, or configure internet egress. The panel attempts to detect the public IPv4 address of the VPS hosting that installation and pre-fills it as the client endpoint on UDP port 51820. Administrators can replace it with their own DNS name or another public address. Detection requires outbound HTTPS access to api.ipify.org; if unavailable, the endpoint can be entered manually. Each installation detects its own VPS address and keeps its own keys and client registry separate. Client profiles currently route only the private VPN subnet (10.66.0.0/24); full-tunnel internet access is not configured. OpenVPN discovery remains read-only and its installation/client management are planned separately.
+WireGuard installation creates a private server configuration but does not automatically start the interface, change firewall rules, enable IP forwarding, or configure internet egress. The panel attempts to detect the public IPv4 address of the VPS hosting that installation and pre-fills it as the client endpoint on UDP port 51820. Administrators can replace it with their own DNS name or another public address. Detection requires outbound HTTPS access to api.ipify.org; if unavailable, the endpoint can be entered manually. Each installation detects its own VPS address and keeps its own keys and client registry separate. Client profiles currently route only the private VPN subnet (10.66.0.0/24); full-tunnel internet access is not configured. OpenVPN discovery remains read-only and its installation/client management are planned separately. Xray-core service discovery is also read-only at this stage; it reports whether the Xray binary and system service are present without reading configuration files or exposing credentials. VLESS/VMess installation, per-VPS domain/TLS or REALITY setup, and client management are planned as separately reviewed changes.
 
 ## Requirements
 
@@ -79,7 +79,7 @@ The development server is not intended for production. Run automated checks with
 ## Roadmap
 
 1. Foundation, dashboard, secure authentication and SSH account operations
-2. OpenVPN installation, certificate-based client creation/revocation and secure .ovpn downloads; WireGuard routing/NAT and firewall setup
+2. Xray-core installation and VLESS/VMess client management; OpenVPN installation, certificate-based client creation/revocation and secure .ovpn downloads; WireGuard routing/NAT and firewall setup
 3. Domain and TLS lifecycle management
 4. Usage limits, backups, monitoring improvements and notifications
 5. Integration tests, hardening and deployment documentation
