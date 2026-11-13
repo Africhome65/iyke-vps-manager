@@ -346,7 +346,8 @@ def wireguard_install():
     public_key = run(["wg", "pubkey"], private_key + "\n")
     if not re.fullmatch(r"[A-Za-z0-9+/]{43}=", public_key):
         fail("WireGuard generated an invalid public key")
-    config = ("[Interface]\n"
+    config = ("# Managed by Iyke VPS Manager; do not edit manually.\n"
+              "[Interface]\n"
               "Address = 10.66.0.1/24\n"
               "ListenPort = 51820\n"
               f"PrivateKey = {private_key}\n")
@@ -479,8 +480,11 @@ def _check_wg_config():
     _secure_wireguard_dir()
     path = "/etc/wireguard/wg0.conf"
     config = _read_root_file(path)
-    if "[Interface]" not in config or "PrivateKey =" not in config or "ListenPort =" not in config:
-        fail("WireGuard server configuration is incomplete")
+    if (not config.startswith("# Managed by Iyke VPS Manager; do not edit manually.\\n")
+            or len(re.findall(r"(?m)^\\[Interface\\]$", config)) != 1
+            or len(re.findall(r"(?m)^ListenPort\\s*=\\s*(\\d+)\\s*$", config)) != 1
+            or len(re.findall(r"(?m)^PrivateKey\\s*=", config)) != 1):
+        fail("WireGuard configuration is not managed by Iyke VPS Manager; refusing to modify it")
     if not shutil.which("wg"):
         fail("WireGuard is not installed")
     return config
@@ -528,6 +532,10 @@ def _wireguard_create_peer_unlocked(name, endpoint):
     if not _valid_endpoint(endpoint):
         fail("Endpoint must be a public IP address or hostname followed by :port")
     config = _check_wg_config()
+    listen_ports = re.findall(r"(?m)^ListenPort\\s*=\\s*(\\d+)\\s*$", config)
+    endpoint_port = int(endpoint.rpartition(":")[2])
+    if not listen_ports or endpoint_port != int(listen_ports[0]):
+        fail("Client endpoint port must match the server WireGuard ListenPort")
     peers = _peer_registry()
     if name in peers:
         fail("A WireGuard client with that name already exists")
