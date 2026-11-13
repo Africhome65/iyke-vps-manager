@@ -154,7 +154,7 @@ def test_wireguard_config_must_be_manager_owned(monkeypatch, tmp_path):
     config_dir = tmp_path / "wireguard"
     config_dir.mkdir()
     config = config_dir / "wg0.conf"
-    config.write_text("[Interface]\\nPrivateKey = " + "A" * 43 + "=\\nListenPort = 51820\\n", encoding="utf-8")
+    config.write_text("[Interface]\nPrivateKey = " + "A" * 43 + "=\nListenPort = 51820\n", encoding="utf-8")
     config.chmod(0o600)
     monkeypatch.setattr(helper, "_secure_wireguard_dir", lambda: str(config_dir))
     monkeypatch.setattr(helper, "_read_root_file", lambda path, mode_mask=0o077: config.read_text(encoding="utf-8"))
@@ -167,7 +167,7 @@ def test_wireguard_config_manager_marker_and_port_are_validated(monkeypatch, tmp
     config_dir = tmp_path / "wireguard"
     config_dir.mkdir()
     config = config_dir / "wg0.conf"
-    config.write_text("# Managed by Iyke VPS Manager; do not edit manually.\\n[Interface]\\nPrivateKey = " + "A" * 43 + "=\\nListenPort = 51820\\n", encoding="utf-8")
+    config.write_text("# Managed by Iyke VPS Manager; do not edit manually.\n[Interface]\nPrivateKey = " + "A" * 43 + "=\nListenPort = 51820\n", encoding="utf-8")
     config.chmod(0o600)
     monkeypatch.setattr(helper, "_secure_wireguard_dir", lambda: str(config_dir))
     monkeypatch.setattr(helper, "_read_root_file", lambda path, mode_mask=0o077: config.read_text(encoding="utf-8"))

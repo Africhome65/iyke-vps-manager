@@ -464,7 +464,7 @@ def _valid_endpoint(value):
     host, separator, port_text = value.rpartition(":")
     if not separator or not port_text.isdigit() or not 1 <= int(port_text) <= 65535:
         return False
-    if not host or any(ch.isspace() for ch in host) or "/" in host or "\\" in host:
+    if not host or any(ch.isspace() for ch in host) or "/" in host or "\" in host:
         return False
     try:
         ipaddress.ip_address(host)
@@ -480,10 +480,10 @@ def _check_wg_config():
     _secure_wireguard_dir()
     path = "/etc/wireguard/wg0.conf"
     config = _read_root_file(path)
-    if (not config.startswith("# Managed by Iyke VPS Manager; do not edit manually.\\n")
-            or len(re.findall(r"(?m)^\\[Interface\\]$", config)) != 1
-            or len(re.findall(r"(?m)^ListenPort\\s*=\\s*(\\d+)\\s*$", config)) != 1
-            or len(re.findall(r"(?m)^PrivateKey\\s*=", config)) != 1):
+    if (not config.startswith("# Managed by Iyke VPS Manager; do not edit manually.\n")
+            or len(re.findall(r"(?m)^\[Interface\]$", config)) != 1
+            or len(re.findall(r"(?m)^ListenPort\s*=\s*(\d+)\s*$", config)) != 1
+            or len(re.findall(r"(?m)^PrivateKey\s*=", config)) != 1):
         fail("WireGuard configuration is not managed by Iyke VPS Manager; refusing to modify it")
     if not shutil.which("wg"):
         fail("WireGuard is not installed")
@@ -532,7 +532,7 @@ def _wireguard_create_peer_unlocked(name, endpoint):
     if not _valid_endpoint(endpoint):
         fail("Endpoint must be a public IP address or hostname followed by :port")
     config = _check_wg_config()
-    listen_ports = re.findall(r"(?m)^ListenPort\\s*=\\s*(\\d+)\\s*$", config)
+    listen_ports = re.findall(r"(?m)^ListenPort\s*=\s*(\d+)\s*$", config)
     endpoint_port = int(endpoint.rpartition(":")[2])
     if not listen_ports or endpoint_port != int(listen_ports[0]):
         fail("Client endpoint port must match the server WireGuard ListenPort")
