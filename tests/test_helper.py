@@ -125,8 +125,6 @@ def test_vpn_status_reports_wireguard_interfaces(monkeypatch):
     def fake_run(args, **kwargs):
         if args == ["wg", "show", "interfaces"]:
             return helper.subprocess.CompletedProcess(args, 0, "wg0\n", "")
-        if args == ["systemctl", "is-active", "wg-quick@wg0.service"]:
-            return helper.subprocess.CompletedProcess(args, 0, "active\n", "")
         raise AssertionError(args)
 
     monkeypatch.setattr(helper.subprocess, "run", fake_run)
