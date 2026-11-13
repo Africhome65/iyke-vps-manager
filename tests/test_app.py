@@ -76,9 +76,13 @@ def test_ssh_user_creation_uses_generated_password_over_stdin(client, monkeypatc
     assert response.status_code == 200
     assert b"client01" in response.data
     assert len(calls) == 1
-    assert calls[0][0][-3:] == ["create", "client01", "2099-12-31"]
-    assert len(calls[0][1]["input"].strip()) >= 20
-    assert " " not in calls[0][1]["input"].strip()
+    assert calls[0][0] == ["sudo", "-n", "/test/helper"]
+    request = __import__("json").loads(calls[0][1]["input"])
+    assert request["action"] == "create"
+    assert request["username"] == "client01"
+    assert request["expiry"] == "2099-12-31"
+    assert len(request["password"]) >= 20
+    assert " " not in request["password"]
 
 
 def test_invalid_username_is_rejected_before_helper(client, monkeypatch):
