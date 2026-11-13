@@ -307,3 +307,52 @@ def test_apt_task_requires_systemd_run(monkeypatch, capsys):
         helper._run_apt_task("/usr/bin/apt-get", ["update"], "update")
     assert exc.value.code == 1
     assert "systemd-run is unavailable" in capsys.readouterr().err
+
+
+
+def test_xray_install_refuses_existing_installation(monkeypatch):
+    monkeypatch.setattr(helper.shutil, "which",
+                        lambda name: "/usr/bin/systemd-run" if name == "systemd-run" else None)
+    monkeypatch.setattr(helper.os.path, "lexists",
+                        lambda path: path == "/usr/local/bin/xray")
+    monkeypatch.setattr(helper.subprocess, "run",
+                        lambda *a, **k: pytest.fail("must not run installer over an existing Xray"))
+    with pytest.raises(SystemExit):
+        helper.xray_install()
+
+
+def test_xray_install_uses_pinned_official_installer_in_transient_service(monkeypatch):
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        if command[:2] == ["getent", "passwd"]:
+            return helper.subprocess.CompletedProcess(command, 2, "", "")
+        return helper.subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper.shutil, "which",
+                        lambda name: "/usr/bin/systemd-run" if name == "systemd-run" else None)
+    monkeypatch.setattr(helper.os.path, "lexists", lambda path: False)
+    monkeypatch.setattr(helper.os.path, "isfile", lambda path: True)
+    monkeypatch.setattr(helper.os, "access", lambda path, mode: True)
+    monkeypatch.setattr(helper, "_unit_state", lambda unit: "inactive")
+    monkeypatch.setattr(helper.subprocess, "run", fake_run)
+
+    result = helper.xray_install()
+    assert result == {"installed": True, "service": "inactive",
+                      "installer": "official-pinned", "firewall_changed": False}
+    assert len(calls) == 2
+    command, kwargs = calls[1]
+    assert command[0] == "/usr/bin/systemd-run"
+    assert "--wait" in command and "--pipe" in command and "--collect" in command
+    assert "--property=RuntimeMaxSec=600" in command
+    assert command[-2] == "-c"
+    assert helper.XRAY_INSTALLER_COMMIT in command[-1]
+    assert "install --without-logfiles" in command[-1]
+    assert kwargs["check"] is True
+    assert kwargs["timeout"] == 660
+
+
+def test_xray_action_rejects_unexpected_fields():
+    with pytest.raises(SystemExit):
+        helper.handle_xray_action({"action": "xray_install", "domain": "example.com"})
