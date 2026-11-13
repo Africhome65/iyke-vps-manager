@@ -110,7 +110,7 @@ def create_app(test_config=None):
                        (current_user.username if current_user.is_authenticated else "system",
                         action, detail[:240], datetime.utcnow().isoformat(timespec="seconds")))
 
-    def run_helper(action, **payload):
+    def run_helper(action, timeout=30, **payload):
         # The privileged executable receives a single strict JSON request on stdin.
         # No user-controlled arguments are ever passed through sudo's command line.
         request_data = {"action": action, **payload}
@@ -118,7 +118,7 @@ def create_app(test_config=None):
             result = subprocess.run(
                 ["sudo", "-n", app.config["HELPER"]],
                 input=json.dumps(request_data, separators=(",", ":")),
-                text=True, capture_output=True, timeout=30, check=False
+                text=True, capture_output=True, timeout=timeout, check=False
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise RuntimeError("Privileged helper unavailable or timed out") from exc
@@ -287,6 +287,33 @@ def create_app(test_config=None):
                       "openvpn": {"installed": False, "instances": []}}
             flash(str(exc), "error")
         return render_template("vpn.html", vpn=status)
+
+
+    @app.post("/vpn/wireguard/install")
+    @login_required
+    def install_wireguard():
+        try:
+            result = json.loads(run_helper("wireguard_install", timeout=360) or "{}")
+            audit("wireguard_installed", "Installed WireGuard and created wg0 server configuration")
+            flash("WireGuard is installed. The server interface has not been started, and firewall rules were not changed.", "success")
+            flash(f"Server public key: {result.get('public_key', '')}", "success")
+        except (RuntimeError, json.JSONDecodeError) as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("vpn_services"))
+
+    @app.post("/vpn/wireguard/service")
+    @login_required
+    def control_wireguard():
+        state = request.form.get("state", "")
+        if state not in {"start", "stop"}:
+            abort(400)
+        try:
+            run_helper("wireguard_service", state=state)
+            audit(f"wireguard_{state}", f"Requested WireGuard interface {state}")
+            flash(f"WireGuard interface {state} requested.", "success")
+        except RuntimeError as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("vpn_services"))
 
     @app.get("/api/metrics")
     @login_required

@@ -120,3 +120,25 @@ def test_vpn_status_page_requires_login_and_displays_services(client, monkeypatc
     assert b"wg0" in response.data
     assert b"OpenVPN" in response.data
     assert b"Not installed" in response.data
+
+
+def test_wireguard_install_route_requires_login_and_calls_helper(client, monkeypatch):
+    response = client.post("/vpn/wireguard/install")
+    assert response.status_code == 302
+    login(client)
+    calls = []
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args, 0, stdout='{"public_key":"abc"}', stderr="")
+    monkeypatch.setattr("app.subprocess.run", fake_run)
+    response = client.post("/vpn/wireguard/install")
+    assert response.status_code == 302
+    request = __import__("json").loads(calls[0][1]["input"])
+    assert request == {"action": "wireguard_install"}
+    assert calls[0][1]["timeout"] == 360
+
+
+def test_wireguard_service_rejects_invalid_state(client, monkeypatch):
+    login(client)
+    monkeypatch.setattr("app.subprocess.run", lambda *a, **k: pytest.fail("helper should not run"))
+    assert client.post("/vpn/wireguard/service", data={"state":"restart"}).status_code == 400

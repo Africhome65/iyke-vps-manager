@@ -132,3 +132,19 @@ def test_vpn_status_reports_wireguard_interfaces(monkeypatch):
     assert status["wireguard"]["installed"] is True
     assert status["wireguard"]["interfaces"] == [{"name": "wg0", "status": "active"}]
     assert status["openvpn"] == {"installed": False, "instances": []}
+
+
+def test_wireguard_install_refuses_existing_config(monkeypatch, tmp_path):
+    config_dir = tmp_path / "wireguard"
+    config_dir.mkdir()
+    (config_dir / "wg0.conf").write_text("keep me", encoding="utf-8")
+    monkeypatch.setattr(helper, "_secure_wireguard_dir", lambda: str(config_dir))
+    monkeypatch.setattr(helper.os.path, "lexists", lambda path: path.endswith("wg0.conf"))
+    monkeypatch.setattr(helper.subprocess, "run", lambda *a, **k: pytest.fail("must not install over existing config"))
+    with pytest.raises(SystemExit):
+        helper.wireguard_install()
+
+
+def test_wireguard_service_validates_state():
+    with pytest.raises(SystemExit):
+        helper.wireguard_service("restart")
