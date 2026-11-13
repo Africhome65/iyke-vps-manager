@@ -99,15 +99,19 @@ def load_registry():
 
 def save_registry(names):
     check_state_dir()
-    if any(not isinstance(name, str) or not NAME.fullmatch(name) for name in names):
-        fail("Refusing to save an invalid managed username")
+    if (not isinstance(names, dict) or any(
+            not isinstance(name, str) or not NAME.fullmatch(name)
+            or isinstance(uid, bool) or not isinstance(uid, int) or uid < SYSTEM_UID_MIN
+            for name, uid in names.items()
+    )):
+        fail("Refusing to save invalid managed-account data")
     fd, temporary = tempfile.mkstemp(prefix=".managed-users-", dir=STATE_DIR)
     try:
         os.fchmod(fd, 0o600)
         os.fchown(fd, os.geteuid(), os.getegid())
         with os.fdopen(fd, "w", encoding="utf-8") as target:
             fd = -1
-            json.dump(sorted(names), target, separators=(",", ":"))
+            json.dump({name: names[name] for name in sorted(names)}, target, separators=(",", ":"))
             target.write("\n")
             target.flush()
             os.fsync(target.fileno())
@@ -177,7 +181,7 @@ def list_accounts(managed):
             numeric_uid = int(uid)
         except ValueError:
             continue
-        if name not in managed or numeric_uid < SYSTEM_UID_MIN:
+        if managed.get(name) != numeric_uid or numeric_uid < SYSTEM_UID_MIN:
             continue
         expiry = ""
         try:
@@ -227,8 +231,11 @@ def main():
             run(["useradd", "--create-home", "--shell", "/bin/bash",
                  "--expiredate", expiry, name])
             try:
+                created_uid = int(run(["id", "-u", name]))
+                if created_uid < SYSTEM_UID_MIN:
+                    fail("Created account has an unexpected system UID")
                 run(["chpasswd"], f"{name}:{password}\n")
-                save_registry(managed | {name})
+                save_registry({**managed, name: created_uid})
             except SystemExit:
                 try:
                     run(["userdel", "--remove", name])
@@ -242,7 +249,8 @@ def main():
             if set(request) != {"action", "username", "expiry"}:
                 fail("Unexpected request fields")
             name = valid_name(request["username"], must_exist=True)
-            if name not in managed:
+            current_uid = int(run(["id", "-u", name]))
+            if managed.get(name) != current_uid:
                 fail("This account is not managed by Iyke VPS Manager")
             expiry = valid_expiry(request["expiry"])
             run(["chage", "--expiredate", expiry, name])
@@ -253,10 +261,13 @@ def main():
             if set(request) != {"action", "username"}:
                 fail("Unexpected request fields")
             name = valid_name(request["username"], must_exist=True)
-            if name not in managed:
+            current_uid = int(run(["id", "-u", name]))
+            if managed.get(name) != current_uid:
                 fail("This account is not managed by Iyke VPS Manager")
             run(["userdel", "--remove", name])
-            save_registry(managed - {name})
+            updated_registry = dict(managed)
+            updated_registry.pop(name)
+            save_registry(updated_registry)
             print("deleted")
             return
 
