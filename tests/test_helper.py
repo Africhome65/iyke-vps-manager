@@ -115,6 +115,7 @@ def test_vpn_status_reports_missing_software(monkeypatch):
     assert helper.vpn_status() == {
         "wireguard": {"installed": False, "interfaces": []},
         "openvpn": {"installed": False, "instances": []},
+        "xray": {"installed": False, "service": "not-installed"},
     }
 
 
@@ -132,6 +133,7 @@ def test_vpn_status_reports_wireguard_interfaces(monkeypatch):
     assert status["wireguard"]["installed"] is True
     assert status["wireguard"]["interfaces"] == [{"name": "wg0", "status": "active"}]
     assert status["openvpn"] == {"installed": False, "instances": []}
+    assert status["xray"] == {"installed": False, "service": "not-installed"}
 
 
 def test_wireguard_install_refuses_existing_config(monkeypatch, tmp_path):
