@@ -345,12 +345,12 @@ def test_xray_install_uses_pinned_official_installer_in_transient_service(monkey
     command, kwargs = calls[1]
     assert command[0] == "/usr/bin/systemd-run"
     assert "--wait" in command and "--pipe" in command and "--collect" in command
-    assert "--property=RuntimeMaxSec=600" in command
+    assert "--property=RuntimeMaxSec=300" in command
     assert command[-2] == "-c"
     assert helper.XRAY_INSTALLER_COMMIT in command[-1]
     assert "install --without-logfiles" in command[-1]
     assert kwargs["check"] is True
-    assert kwargs["timeout"] == 660
+    assert kwargs["timeout"] == 330
 
 
 def test_xray_action_rejects_unexpected_fields():
