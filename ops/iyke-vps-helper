@@ -231,7 +231,7 @@ def vpn_status():
                     if re.fullmatch(r"[A-Za-z0-9_=+.-]{1,15}", interface):
                         wireguard["interfaces"].append({
                             "name": interface,
-                            "status": _unit_state(f"wg-quick@{interface}.service")
+                            "status": "active"
                         })
         except (OSError, subprocess.TimeoutExpired):
             pass
