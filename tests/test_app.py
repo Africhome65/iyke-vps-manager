@@ -172,6 +172,8 @@ def test_vpn_page_loads_peer_list_after_status(client, monkeypatch):
                 "wireguard":{"installed":True,"interfaces":[]},
                 "openvpn":{"installed":False,"instances":[]}
             }
+        elif action == "wireguard_public_endpoint":
+            output = {"endpoint":"8.8.8.8:51820","host":"8.8.8.8","port":51820}
         elif action == "wireguard_peers":
             output = [{"name":"phone01","address":"10.66.0.2/32","endpoint":"vpn.example.com:51820"}]
         else:
@@ -181,7 +183,8 @@ def test_vpn_page_loads_peer_list_after_status(client, monkeypatch):
     response = client.get("/vpn")
     assert response.status_code == 200
     assert b"phone01" in response.data
-    assert calls == ["vpn_status", "wireguard_peers"]
+    assert b'value="8.8.8.8:51820"' in response.data
+    assert calls == ["vpn_status", "wireguard_public_endpoint", "wireguard_peers"]
 
 
 def test_wireguard_create_peer_route_validates_name(client, monkeypatch):
