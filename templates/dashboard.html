@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Overview · Iyke VPS Manager{% endblock %}
+{% block content %}
+<div class="page-heading"><div><div class="eyebrow">SERVER OVERVIEW</div><h1>Dashboard</h1><p class="muted">Live snapshot of this VPS.</p></div><span class="status"><i></i> Panel online</span></div>
+<div class="metric-grid">
+  <article class="metric"><span>CPU usage</span><strong>{{ cpu|round|int }}%</strong><div class="meter"><i style="width:{{ cpu }}%"></i></div></article>
+  <article class="metric"><span>Memory usage</span><strong>{{ memory|round|int }}%</strong><div class="meter"><i style="width:{{ memory }}%"></i></div><small>{{ (memory_used/1073741824)|round(1) }} / {{ (memory_total/1073741824)|round(1) }} GB</small></article>
+  <article class="metric"><span>Disk usage</span><strong>{{ disk|round|int }}%</strong><div class="meter"><i style="width:{{ disk }}%"></i></div><small>{{ (disk_used/1073741824)|round(1) }} / {{ (disk_total/1073741824)|round(1) }} GB</small></article>
+  <article class="metric"><span>System uptime</span><strong>{{ (uptime//86400) }}d {{ ((uptime%86400)//3600) }}h</strong><small>{{ ((uptime%3600)//60) }} minutes</small></article>
+</div>
+<div class="content-grid">
+  <section class="panel"><div class="section-heading"><div><h2>Quick actions</h2><p class="muted">Common server administration tasks.</p></div></div>
+    <a class="action-card" href="{{ url_for('users') }}"><span class="action-icon">SSH</span><span><b>Manage SSH users</b><small>Create accounts, change expiry and remove users.</small></span><b>→</b></a>
+  </section>
+  <section class="panel"><div class="section-heading"><div><h2>Recent activity</h2><p class="muted">Administrator actions recorded by the panel.</p></div></div>
+    {% if audit_rows %}<div class="activity-list">{% for item in audit_rows %}<div class="activity"><span class="activity-dot"></span><div><b>{{ item.action|replace('_',' ')|title }}</b><small>{{ item.detail }} · {{ item.created_at }}</small></div></div>{% endfor %}</div>{% else %}<p class="muted">No activity recorded yet.</p>{% endif %}
+  </section>
+</div>
+<div class="notice"><b>Security reminder</b><span>Keep this panel behind HTTPS and restrict access with your firewall or VPN.</span></div>
+{% endblock %}

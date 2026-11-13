@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""Narrow privileged helper. Installed root-owned; invoked only through sudo."""
+import datetime
+import json
+import os
+import re
+import subprocess
+import sys
+
+NAME = re.compile(r"^[a-z_][a-z0-9_-]{0,30}\$?$")
+SYSTEM_UID_MIN = 1000
+
+
+def fail(message, code=1):
+    print(message, file=sys.stderr)
+    raise SystemExit(code)
+
+
+def run(argv, input_text=None):
+    result = subprocess.run(argv, input=input_text, text=True, capture_output=True, check=False)
+    if result.returncode:
+        fail(result.stderr.strip() or "System command failed")
+    return result.stdout.strip()
+
+
+def valid_name(value):
+    if not NAME.fullmatch(value) or value in {"root", "nobody"}:
+        fail("Invalid or protected username")
+    return value
+
+
+def main():
+    if os.geteuid() != 0:
+        fail("This helper must run as root")
+    if len(sys.argv) < 2:
+        fail("Missing action")
+    action = sys.argv[1]
+    if action == "list" and len(sys.argv) == 2:
+        rows = []
+        for line in run(["getent", "passwd"]).splitlines():
+            parts = line.split(":")
+            if len(parts) != 7:
+                continue
+            name, _, uid, gid, _, home, shell = parts
+            if int(uid) < SYSTEM_UID_MIN or name in {"nobody"}:
+                continue
+            expiry = ""
+            try:
+                expiry = run(["chage", "-l", name]).split("Account expires:", 1)[1].strip()
+                if expiry.lower() in {"never", "never expires"}:
+                    expiry = ""
+            except (SystemExit, IndexError):
+                expiry = ""
+            rows.append({"username": name, "uid": int(uid), "home": home,
+                         "shell": shell, "expiry": expiry})
+        print(json.dumps(rows))
+        return
+    if action == "create" and len(sys.argv) == 4:
+        name = valid_name(sys.argv[2])
+        expiry = sys.argv[3]
+        try:
+            parsed = datetime.date.fromisoformat(expiry)
+            if parsed <= datetime.date.today():
+                fail("Expiry must be in the future")
+        except ValueError:
+            fail("Expiry must use YYYY-MM-DD")
+        password = sys.stdin.readline().rstrip("\n")
+        if len(password) < 20 or "\n" in password or ":" in password:
+            fail("Invalid generated password")
+        run(["useradd", "--create-home", "--shell", "/bin/bash", "--expiredate", expiry, name])
+        try:
+            run(["chpasswd"], f"{name}:{password}\n")
+        except SystemExit:
+            run(["userdel", "--remove", name])
+            raise
+        print("created")
+        return
+    if action == "expire" and len(sys.argv) == 4:
+        name = valid_name(sys.argv[2])
+        expiry = sys.argv[3]
+        try:
+            parsed = datetime.date.fromisoformat(expiry)
+            if parsed <= datetime.date.today():
+                fail("Expiry must be in the future")
+        except ValueError:
+            fail("Expiry must use YYYY-MM-DD")
+        run(["id", name])
+        run(["chage", "--expiredate", expiry, name])
+        print("updated")
+        return
+    if action == "delete" and len(sys.argv) == 3:
+        name = valid_name(sys.argv[2])
+        run(["id", name])
+        run(["userdel", "--remove", name])
+        print("deleted")
+        return
+    fail("Unsupported action or invalid arguments")
+
+
+if __name__ == "__main__":
+    main()

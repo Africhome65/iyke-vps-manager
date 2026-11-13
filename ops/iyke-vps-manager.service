@@ -1,0 +1,27 @@
+[Unit]
+Description=Iyke VPS Manager
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=iyke-vps-manager
+Group=iyke-vps-manager
+WorkingDirectory=/opt/iyke-vps-manager
+EnvironmentFile=/etc/iyke-vps-manager/manager.env
+ExecStart=/opt/iyke-vps-manager/venv/bin/gunicorn --workers 2 --threads 4 --bind 127.0.0.1:8787 --timeout 30 run:app
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/iyke-vps-manager
+UMask=0077
+LockPersonality=true
+RestrictSUIDSGID=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

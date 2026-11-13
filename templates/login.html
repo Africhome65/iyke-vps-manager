@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Administrator login · Iyke VPS Manager{% endblock %}
+{% block content %}
+<section class="auth-wrap">
+  <div class="panel auth-panel">
+    <div class="eyebrow">SECURE ADMINISTRATION</div>
+    <h1>Welcome back</h1>
+    <p class="muted">Sign in to manage this server.</p>
+    <form method="post" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>Username<input name="username" autocomplete="username" required maxlength="64"></label>
+      <label>Password<input type="password" name="password" autocomplete="current-password" required></label>
+      <button class="button primary" type="submit">Sign in</button>
+    </form>
+    <p class="tiny muted">If this is a new installation, use the one-time credentials printed by the installer.</p>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}SSH users · Iyke VPS Manager{% endblock %}
+{% block content %}
+<div class="page-heading"><div><div class="eyebrow">ACCOUNT MANAGEMENT</div><h1>SSH users</h1><p class="muted">Manage local Linux login accounts on this server.</p></div></div>
+<section class="panel">
+  <div class="section-heading"><div><h2>Create an account</h2><p class="muted">A strong temporary password will be generated and shown once.</p></div></div>
+  <form method="post" action="{{ url_for('create_user') }}" class="create-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Username<input name="username" placeholder="client01" pattern="[a-z_][a-z0-9_-]{0,30}" maxlength="31" required></label>
+    <label>Account expiry<input type="date" name="expiry" min="{{ (now if now is defined else '') }}" required></label>
+    <button class="button primary" type="submit">Create SSH user</button>
+  </form>
+</section>
+<section class="panel table-panel">
+  <div class="section-heading"><div><h2>Existing accounts</h2><p class="muted">Only ordinary local user accounts are listed.</p></div></div>
+  {% if users %}
+  <div class="table-scroll"><table><thead><tr><th>Username</th><th>UID</th><th>Home directory</th><th>Shell</th><th>Expiry</th><th>Actions</th></tr></thead><tbody>
+  {% for user in users %}<tr><td><b>{{ user.username }}</b></td><td>{{ user.uid }}</td><td>{{ user.home }}</td><td>{{ user.shell }}</td><td>{{ user.expiry or 'Not set' }}</td><td><div class="row-actions">
+    <form method="post" action="{{ url_for('update_expiry', username=user.username) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="date" name="expiry" required aria-label="New expiry"><button class="button small" type="submit">Set expiry</button></form>
+    <form method="post" action="{{ url_for('delete_user', username=user.username) }}" onsubmit="return confirm('Delete this Linux account and its home directory?')"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button danger small" type="submit">Delete</button></form>
+  </div></td></tr>{% endfor %}
+  </tbody></table></div>
+  {% else %}<p class="empty">No eligible SSH accounts found, or the privileged helper is not installed.</p>{% endif %}
+</section>
+{% endblock %}
