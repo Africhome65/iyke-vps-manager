@@ -284,7 +284,8 @@ def create_app(test_config=None):
             status = json.loads(run_helper("vpn_status") or "{}")
         except (RuntimeError, json.JSONDecodeError) as exc:
             status = {"wireguard": {"installed": False, "interfaces": []},
-                      "openvpn": {"installed": False, "instances": []}}
+                      "openvpn": {"installed": False, "instances": []},
+                      "xray": {"installed": False, "service": "not-installed"}}
             flash(str(exc), "error")
         peers = []
         public_endpoint = ""
