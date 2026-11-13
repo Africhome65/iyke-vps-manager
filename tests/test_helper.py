@@ -107,3 +107,28 @@ def test_list_accounts_parses_chage_aligned_colon(monkeypatch):
     monkeypatch.setattr(helper, "run", fake_run)
     rows = helper.list_accounts({"paneltest01": 1001})
     assert rows[0]["expiry"] == "Nov 30, 2026"
+
+
+
+def test_vpn_status_reports_missing_software(monkeypatch):
+    monkeypatch.setattr(helper.shutil, "which", lambda command: None)
+    assert helper.vpn_status() == {
+        "wireguard": {"installed": False, "interfaces": []},
+        "openvpn": {"installed": False, "instances": []},
+    }
+
+
+def test_vpn_status_reports_wireguard_interfaces(monkeypatch):
+    monkeypatch.setattr(helper.shutil, "which",
+                        lambda command: "/usr/bin/wg" if command == "wg" else None)
+
+    def fake_run(args, **kwargs):
+        if args == ["wg", "show", "interfaces"]:
+            return helper.subprocess.CompletedProcess(args, 0, "wg0\n", "")
+        raise AssertionError(args)
+
+    monkeypatch.setattr(helper.subprocess, "run", fake_run)
+    status = helper.vpn_status()
+    assert status["wireguard"]["installed"] is True
+    assert status["wireguard"]["interfaces"] == [{"name": "wg0", "status": "active"}]
+    assert status["openvpn"] == {"installed": False, "instances": []}

@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}VPN services · Iyke VPS Manager{% endblock %}
+{% block content %}
+<div class="page-heading"><div><div class="eyebrow">NETWORK SERVICES</div><h1>VPN services</h1><p class="muted">Read-only status for supported VPN software on this VPS.</p></div></div>
+<div class="notice"><b>Safe status check</b><span>This page only checks installed software, configured instance names and service states. It does not install, start, stop or change VPN services.</span></div>
+<div class="vpn-grid">
+  <section class="panel">
+    <div class="section-heading"><div><h2>WireGuard</h2><p class="muted">Modern, lightweight VPN</p></div><span class="vpn-state {{ 'available' if vpn.wireguard.installed else 'missing' }}">{{ 'Installed' if vpn.wireguard.installed else 'Not installed' }}</span></div>
+    {% if vpn.wireguard.installed %}
+      {% if vpn.wireguard.interfaces %}
+        <div class="vpn-list">{% for item in vpn.wireguard.interfaces %}<div class="vpn-instance"><b>{{ item.name }}</b><span class="vpn-state {{ 'available' if item.status == 'active' else 'missing' }}">{{ item.status|title }}</span></div>{% endfor %}</div>
+      {% else %}<p class="empty">WireGuard is installed, but no active interfaces were reported.</p>{% endif %}
+    {% else %}<p class="muted">Install WireGuard to enable interface management in a future release.</p>{% endif %}
+  </section>
+  <section class="panel">
+    <div class="section-heading"><div><h2>OpenVPN</h2><p class="muted">Open-source SSL/TLS VPN</p></div><span class="vpn-state {{ 'available' if vpn.openvpn.installed else 'missing' }}">{{ 'Installed' if vpn.openvpn.installed else 'Not installed' }}</span></div>
+    {% if vpn.openvpn.installed %}
+      {% if vpn.openvpn.instances %}
+        <div class="vpn-list">{% for item in vpn.openvpn.instances %}<div class="vpn-instance"><b>{{ item.name }}</b><span class="vpn-state {{ 'available' if item.status == 'active' else 'missing' }}">{{ item.status|title }}</span></div>{% endfor %}</div>
+      {% else %}<p class="empty">OpenVPN is installed, but no server configuration files were found.</p>{% endif %}
+    {% else %}<p class="muted">Install OpenVPN to enable instance management in a future release.</p>{% endif %}
+  </section>
+</div>
+{% endblock %}

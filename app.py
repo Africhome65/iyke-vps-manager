@@ -277,6 +277,17 @@ def create_app(test_config=None):
             flash(str(exc), "error")
         return redirect(url_for("users"))
 
+    @app.get("/vpn")
+    @login_required
+    def vpn_services():
+        try:
+            status = json.loads(run_helper("vpn_status") or "{}")
+        except (RuntimeError, json.JSONDecodeError) as exc:
+            status = {"wireguard": {"installed": False, "interfaces": []},
+                      "openvpn": {"installed": False, "instances": []}}
+            flash(str(exc), "error")
+        return render_template("vpn.html", vpn=status)
+
     @app.get("/api/metrics")
     @login_required
     def metrics():
