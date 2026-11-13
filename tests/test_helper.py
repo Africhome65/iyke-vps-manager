@@ -395,3 +395,50 @@ def test_xray_nginx_config_has_acme_redirect_and_exact_ws_routes():
     assert "location = /vmess" in config
     assert "ssl_certificate_key /etc/letsencrypt/live/vpn.example.com/privkey.pem;" in config
 
+
+
+def test_xray_certificate_validation_accepts_matching_valid_files(monkeypatch, tmp_path):
+    live = tmp_path / "live"
+    live.mkdir()
+    cert = live / "fullchain.pem"
+    key = live / "privkey.pem"
+    cert.write_text("certificate", encoding="utf-8")
+    key.write_text("private key", encoding="utf-8")
+    cert.chmod(0o644)
+    key.chmod(0o600)
+    monkeypatch.setattr(helper.os.path, "realpath",
+                        lambda path, strict=False: str(cert if path.endswith("fullchain.pem") else key))
+    monkeypatch.setattr(helper.os, "stat", lambda path, follow_symlinks=False: (
+        cert.stat() if path == str(cert) else key.stat()
+    ))
+    def fake_run(args, **kwargs):
+        if args[1:4] == ["x509", "-in", str(cert)]:
+            return helper.subprocess.CompletedProcess(args, 0, "OK", "")
+        if args[1:3] == ["x509", "-in"]:
+            return helper.subprocess.CompletedProcess(args, 0, "PUBLIC KEY", "")
+        if args[1:3] == ["pkey", "-in"]:
+            return helper.subprocess.CompletedProcess(args, 0, "PUBLIC KEY", "")
+        raise AssertionError(args)
+    monkeypatch.setattr(helper.subprocess, "run", fake_run)
+    result = helper._xray_validate_certificate("vpn.example.com")
+    assert result["hostname"] == "vpn.example.com"
+    assert result["private_key"] == str(key)
+
+
+def test_xray_certificate_validation_rejects_wide_private_key_permissions(monkeypatch, tmp_path):
+    live = tmp_path / "live"
+    live.mkdir()
+    cert = live / "fullchain.pem"
+    key = live / "privkey.pem"
+    cert.write_text("certificate", encoding="utf-8")
+    key.write_text("private key", encoding="utf-8")
+    cert.chmod(0o644)
+    key.chmod(0o640)
+    monkeypatch.setattr(helper.os.path, "realpath",
+                        lambda path, strict=False: str(cert if path.endswith("fullchain.pem") else key))
+    monkeypatch.setattr(helper.os, "stat", lambda path, follow_symlinks=False: (
+        cert.stat() if path == str(cert) else key.stat()
+    ))
+    with pytest.raises(SystemExit):
+        helper._xray_validate_certificate("vpn.example.com")
+
