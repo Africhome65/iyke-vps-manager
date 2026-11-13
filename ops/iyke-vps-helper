@@ -399,6 +399,23 @@ def _read_root_file(path, mode_mask=0o077):
             os.close(fd)
 
 
+@contextmanager
+def _wireguard_peer_lock():
+    directory = _secure_wireguard_dir()
+    path = os.path.join(directory, "peers.lock")
+    flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags, 0o600)
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_nlink != 1:
+            os.close(fd)
+            fail("WireGuard peer lock file is unsafe")
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "r+") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            yield
+
+
 def _peer_registry():
     directory = _secure_wireguard_dir()
     path = os.path.join(directory, "peers.json")
@@ -422,7 +439,7 @@ def _peer_registry():
             address = ipaddress.ip_interface(peer["address"])
         except (ValueError, TypeError):
             fail("WireGuard peer registry contains an invalid address")
-        if address.network.with_prefixlen != WG_SUBNET or address.ip not in ipaddress.ip_network(WG_SUBNET):
+        if address.network.prefixlen != 32 or address.ip not in ipaddress.ip_network(WG_SUBNET):
             fail("WireGuard peer registry contains an out-of-range address")
         if not isinstance(peer["endpoint"], str) or not _valid_endpoint(peer["endpoint"]):
             fail("WireGuard peer registry contains an invalid endpoint")
@@ -453,6 +470,7 @@ def _valid_endpoint(value):
 
 
 def _check_wg_config():
+    _secure_wireguard_dir()
     path = "/etc/wireguard/wg0.conf"
     config = _read_root_file(path)
     if "[Interface]" not in config or "PrivateKey =" not in config or "ListenPort =" not in config:
@@ -499,7 +517,7 @@ def wireguard_list_peers():
             for name in sorted(peers)]
 
 
-def wireguard_create_peer(name, endpoint):
+def _wireguard_create_peer_unlocked(name, endpoint):
     name = _valid_peer_name(name)
     if not _valid_endpoint(endpoint):
         fail("Endpoint must be a public IP address or hostname followed by :port")
@@ -584,7 +602,7 @@ def wireguard_get_profile(name):
     return _read_root_file(path)
 
 
-def wireguard_revoke_peer(name):
+def _wireguard_revoke_peer_unlocked(name):
     name = _valid_peer_name(name)
     config = _check_wg_config()
     peers = _peer_registry()
@@ -612,6 +630,16 @@ def wireguard_revoke_peer(name):
         fail("Unable to revoke client cleanly; the previous configuration was restored")
     return {"name": name, "revoked": True}
 
+
+
+def wireguard_create_peer(name, endpoint):
+    with _wireguard_peer_lock():
+        return _wireguard_create_peer_unlocked(name, endpoint)
+
+
+def wireguard_revoke_peer(name):
+    with _wireguard_peer_lock():
+        return _wireguard_revoke_peer_unlocked(name)
 
 
 def handle_vpn_action(request):
