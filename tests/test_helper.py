@@ -356,3 +356,42 @@ def test_xray_install_uses_pinned_official_installer_in_transient_service(monkey
 def test_xray_action_rejects_unexpected_fields():
     with pytest.raises(SystemExit):
         helper.handle_xray_action({"action": "xray_install", "domain": "example.com"})
+
+
+def test_xray_domain_validation():
+    assert helper._valid_xray_domain("vpn.example.com") == "vpn.example.com"
+    for value in ("https://vpn.example.com", "vpn.example.com:443",
+                  "vpn.example.com/", "localhost", "bad..example.com",
+                  "-bad.example.com", "vpn.example.com."):
+        with pytest.raises(SystemExit):
+            helper._valid_xray_domain(value)
+
+
+def test_xray_listener_config_uses_loopback_and_separate_protocols():
+    config = helper._xray_listener_config(
+        [{"id": "123e4567-e89b-42d3-a456-426614174000", "name": "phone"}],
+        [{"id": "123e4567-e89b-42d3-a456-426614174001", "name": "tablet"}],
+    )
+    assert [(item["listen"], item["port"], item["protocol"])
+            for item in config["inbounds"]] == [
+                ("127.0.0.1", 10000, "vless"),
+                ("127.0.0.1", 10001, "vmess"),
+            ]
+    assert [item["streamSettings"]["wsSettings"]["path"]
+            for item in config["inbounds"]] == ["/vless", "/vmess"]
+
+
+def test_xray_listener_config_rejects_invalid_uuid():
+    with pytest.raises(SystemExit):
+        helper._xray_listener_config([{"id": "not-a-uuid"}], [])
+
+
+def test_xray_nginx_config_has_acme_redirect_and_exact_ws_routes():
+    config = helper._xray_nginx_config("vpn.example.com")
+    assert "listen 80;" in config
+    assert "try_files $uri =404;" in config
+    assert "return 301 https://$host$request_uri;" in config
+    assert "location = /vless" in config
+    assert "location = /vmess" in config
+    assert "ssl_certificate_key /etc/letsencrypt/live/vpn.example.com/privkey.pem;" in config
+
