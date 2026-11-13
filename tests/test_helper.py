@@ -91,3 +91,19 @@ def test_list_accounts_ignores_reused_username(monkeypatch):
     rows = helper.list_accounts({"client01": 2001})
     assert len(rows) == 1
     assert rows[0]["uid"] == 2001
+
+
+
+def test_list_accounts_parses_chage_aligned_colon(monkeypatch):
+    def fake_run(args):
+        if args == ["getent", "passwd"]:
+            return "paneltest01:x:1001:1001::/home/paneltest01:/bin/bash"
+        if args == ["chage", "-l", "paneltest01"]:
+            return ("Last password change                                    : Nov 13, 2026\\n"
+                    "Account expires                                         : Nov 30, 2026\\n"
+                    "Password expires                                        : never")
+        raise AssertionError(args)
+
+    monkeypatch.setattr(helper, "run", fake_run)
+    rows = helper.list_accounts({"paneltest01": 1001})
+    assert rows[0]["expiry"] == "Nov 30, 2026"
