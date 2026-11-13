@@ -7,7 +7,7 @@ import re
 import subprocess
 import sys
 
-NAME = re.compile(r"^[a-z_][a-z0-9_-]{0,30}\\$?$")
+NAME = re.compile(r"^[a-z_][a-z0-9_-]{0,30}\$?$")
 SYSTEM_UID_MIN = 1000
 MAX_REQUEST_BYTES = 8192
 
