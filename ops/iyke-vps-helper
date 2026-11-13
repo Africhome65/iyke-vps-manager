@@ -93,7 +93,7 @@ def main():
         expiry = valid_expiry(request["expiry"])
         password = request["password"]
         if (not isinstance(password, str) or len(password) < 20 or len(password) > 256
-                or any(ch in password for ch in "\\r\\n:")):
+                or any(ch in password for ch in "\r\n:")):
             fail("Invalid generated password")
         run(["useradd", "--create-home", "--shell", "/bin/bash", "--expiredate", expiry, name])
         try:
