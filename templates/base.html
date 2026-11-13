@@ -11,7 +11,7 @@
   <header class="topbar">
     <a class="brand" href="{{ url_for('dashboard') }}"><span class="brand-mark">I</span> Iyke VPS Manager</a>
     {% if current_user.is_authenticated %}
-    <nav><a href="{{ url_for('dashboard') }}">Overview</a><a href="{{ url_for('users') }}">SSH Users</a>
+    <nav><a href="{{ url_for('dashboard') }}">Overview</a><a href="{{ url_for('users') }}">SSH Users</a><a href="{{ url_for('password_settings') }}">Security</a>
       <form method="post" action="{{ url_for('logout') }}" class="inline">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button class="nav-button" type="submit">Sign out</button>
