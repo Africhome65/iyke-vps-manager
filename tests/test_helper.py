@@ -177,15 +177,15 @@ def test_wireguard_peer_config_has_only_private_subnet_routes():
     assert "AllowedIPs = 0.0.0.0/0" not in config
 
 
-def test_wireguard_peer_registry_accepts_client_host_address(tmp_path, monkeypatch):
-    registry = tmp_path / "peers.json"
-    registry.write_text(json.dumps({
+def test_wireguard_peer_registry_accepts_client_host_address(monkeypatch, tmp_path):
+    payload = json.dumps({
         "phone01": {
             "public_key": "A" * 43 + "=",
             "address": "10.66.0.2/32",
             "endpoint": "vpn.example.com:51820"
         }
-    }), encoding="utf-8")
-    registry.chmod(0o600)
+    })
     monkeypatch.setattr(helper, "_secure_wireguard_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(helper.os.path, "lexists", lambda path: True)
+    monkeypatch.setattr(helper, "_read_root_file", lambda path: payload)
     assert helper._peer_registry()["phone01"]["address"] == "10.66.0.2/32"
