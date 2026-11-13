@@ -11,9 +11,11 @@ The first release provides:
 - A restricted privileged helper; the Flask web process is not run as root
 - SQLite-backed administrator bootstrap and audit events
 - systemd service and installation/uninstallation scripts
-- Read-only VPN software status for WireGuard and OpenVPN (no installation or configuration changes)
+- WireGuard installation and explicit interface start/stop controls
+- WireGuard client creation and revocation with unique tunnel addresses
+- Authenticated, non-cacheable client profile downloads and QR-code display
 
-VPN peer and server configuration management, domain/SSL automation, backups and advanced traffic accounting are planned modules and are not claimed as implemented yet. The VPN page currently performs read-only software and service discovery only.
+WireGuard installation creates a private server configuration but does not automatically start the interface, change firewall rules, enable IP forwarding, or configure internet egress. Each client requires an administrator-supplied public VPS hostname/IP and UDP port. Client profiles currently route only the private VPN subnet (10.66.0.0/24); full-tunnel internet access is not configured. OpenVPN discovery remains read-only and its installation/client management are planned separately.
 
 ## Requirements
 
@@ -54,7 +56,8 @@ For safety, the panel lists and modifies only Linux accounts created through Iyk
 - The helper accepts a small fixed set of actions, validates usernames and expiry dates, and checks every modification against its root-owned managed-account registry.
 - Passwords are passed to the helper over stdin, never as command-line arguments.
 - CSRF protection, secure cookie defaults, login throttling and audit logging are enabled.
-- VPN discovery uses a fixed helper action and reports service metadata only; it never returns private keys or VPN configuration contents.
+- VPN status discovery never returns private keys or configuration contents.
+- WireGuard server and client private keys are kept in root-owned, mode-0600 files; client profiles are served only to authenticated administrators with cache prevention headers. Treat every downloaded profile and QR code as a password-equivalent secret.
 - Never commit `.env`, database files, private keys, passwords or generated secrets.
 
 ## Development
@@ -75,7 +78,7 @@ The development server is not intended for production. Run automated checks with
 ## Roadmap
 
 1. Foundation, dashboard, secure authentication and SSH account operations
-2. VPN/proxy protocol adapters (WireGuard, OpenVPN, VMess, VLESS, Trojan, Shadowsocks)
+2. OpenVPN installation, certificate-based client creation/revocation and secure .ovpn downloads; WireGuard routing/NAT and firewall setup
 3. Domain and TLS lifecycle management
 4. Usage limits, backups, monitoring improvements and notifications
 5. Integration tests, hardening and deployment documentation
