@@ -47,9 +47,10 @@
     {% if vpn.xray.installed %}
       <div class="vpn-instance"><b>System service</b><span class="vpn-state {{ 'available' if vpn.xray.service == 'active' else 'missing' }}">{{ vpn.xray.service|title }}</span></div>
     {% else %}
-      <p class="muted">Xray-core is not installed. Installation and per-VPS domain or REALITY configuration will be added in a separately reviewed step.</p>
+      <p class="muted">Install the official Xray-core engine. This does not create VLESS/VMess listeners, obtain certificates, change DNS or alter firewall rules.</p>
+      <form method="post" action="{{ url_for('install_xray') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit">Install Xray-core</button></form>
     {% endif %}
-    <p class="muted">This status check does not read or display Xray configuration files, credentials or private keys.</p>
+    <p class="muted">Installation refuses to overwrite an existing Xray binary, service, configuration directory or xray account. Status checks never display configuration files, credentials or private keys.</p>
   </section>
 </div>
 {% endblock %}
