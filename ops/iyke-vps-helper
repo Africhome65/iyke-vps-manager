@@ -7,6 +7,7 @@ import ipaddress
 import os
 import re
 import shutil
+import socket
 import stat
 import subprocess
 import sys
@@ -926,13 +927,71 @@ def xray_install():
     }
 
 
+
+def xray_preflight(domain):
+    """Read-only readiness checks before claiming TCP 80/443 for Xray proxying."""
+    domain = _valid_xray_domain(domain)
+    try:
+        records = socket.getaddrinfo(domain, None, type=socket.SOCK_STREAM)
+        addresses = sorted({item[4][0].split("%", 1)[0] for item in records})
+        parsed = [ipaddress.ip_address(item) for item in addresses]
+    except (OSError, ValueError):
+        fail("The hostname does not resolve to valid IP addresses")
+    if not parsed or any(not item.is_global for item in parsed):
+        fail("The hostname must resolve only to public IP addresses")
+    endpoint = wireguard_public_endpoint()
+    if endpoint["host"] not in addresses:
+        fail("The hostname does not resolve to this VPS public IPv4 address")
+    _xray_validate_certificate(domain)
+    ss = shutil.which("ss")
+    if not ss:
+        fail("The ss command is required to inspect listening ports")
+    try:
+        result = subprocess.run(
+            [ss, "-H", "-ltn"], text=True, capture_output=True,
+            check=False, timeout=10,
+        )
+    except subprocess.TimeoutExpired:
+        fail("Timed out while checking listening ports")
+    if result.returncode != 0:
+        fail("Unable to inspect TCP listening ports")
+    occupied = []
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) < 4:
+            continue
+        local = fields[3]
+        port = local.rsplit(":", 1)[-1]
+        if port.isdigit() and int(port) in {80, 443, 10000, 10001}:
+            occupied.append(int(port))
+    if occupied:
+        fail("Required TCP ports are already in use: " + ", ".join(map(str, sorted(set(occupied)))))
+    if not os.path.isfile("/usr/local/bin/xray") or not os.access("/usr/local/bin/xray", os.X_OK):
+        fail("Install Xray-core before configuring VLESS and VMess")
+    return {
+        "ready": True,
+        "domain": domain,
+        "addresses": addresses,
+        "certificate_valid": True,
+        "available_tcp_ports": [80, 443, 10000, 10001],
+        "changes_made": False,
+    }
+
+
+
 def handle_xray_action(request):
-    if request.get("action") != "xray_install":
-        return False
-    if set(request) != {"action"}:
-        fail("Unexpected request fields")
-    print(json.dumps(xray_install()))
-    return True
+    action = request.get("action")
+    if action == "xray_install":
+        if set(request) != {"action"}:
+            fail("Unexpected request fields")
+        print(json.dumps(xray_install()))
+        return True
+    if action == "xray_preflight":
+        if set(request) != {"action", "domain"}:
+            fail("Unexpected request fields")
+        print(json.dumps(xray_preflight(request["domain"])))
+        return True
+    return False
 
 
 def handle_vpn_action(request):
