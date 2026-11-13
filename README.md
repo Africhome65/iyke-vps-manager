@@ -11,8 +11,9 @@ The first release provides:
 - A restricted privileged helper; the Flask web process is not run as root
 - SQLite-backed administrator bootstrap and audit events
 - systemd service and installation/uninstallation scripts
+- Read-only VPN software status for WireGuard and OpenVPN (no installation or configuration changes)
 
-VPN/proxy protocol management, domain/SSL automation, backups and advanced traffic accounting are planned modules and are not claimed as implemented yet.
+VPN peer and server configuration management, domain/SSL automation, backups and advanced traffic accounting are planned modules and are not claimed as implemented yet. The VPN page currently performs read-only software and service discovery only.
 
 ## Requirements
 
@@ -53,6 +54,7 @@ For safety, the panel lists and modifies only Linux accounts created through Iyk
 - The helper accepts a small fixed set of actions, validates usernames and expiry dates, and checks every modification against its root-owned managed-account registry.
 - Passwords are passed to the helper over stdin, never as command-line arguments.
 - CSRF protection, secure cookie defaults, login throttling and audit logging are enabled.
+- VPN discovery uses a fixed helper action and reports service metadata only; it never returns private keys or VPN configuration contents.
 - Never commit `.env`, database files, private keys, passwords or generated secrets.
 
 ## Development
