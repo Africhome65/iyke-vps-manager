@@ -4,6 +4,7 @@ set -Eeuo pipefail
 APP_DIR="/opt/iyke-vps-manager"
 ETC_DIR="/etc/iyke-vps-manager"
 DATA_DIR="/var/lib/iyke-vps-manager"
+STATE_DIR="/var/lib/iyke-vps-manager-state"
 SERVICE_USER="iyke-vps-manager"
 HELPER="/usr/local/sbin/iyke-vps-helper"
 REPO_URL="https://github.com/Africhome65/iyke-vps-manager.git"
@@ -21,6 +22,8 @@ fi
 install -d -o root -g root -m 0755 "$APP_DIR"
 install -d -o root -g "$SERVICE_USER" -m 0750 "$ETC_DIR"
 install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0750 "$DATA_DIR"
+# This registry is root-owned and inaccessible to the web-service account.
+install -d -o root -g root -m 0700 "$STATE_DIR"
 
 if [[ -d "$APP_DIR/.git" ]]; then
   git -C "$APP_DIR" fetch --depth 1 origin main
@@ -76,7 +79,11 @@ if [[ "$ready" == "1" ]]; then
   # Remove the one-time plaintext bootstrap secret from future service environments.
   sed -i '/^IYKE_BOOTSTRAP_PASSWORD=/d' "$ETC_DIR/manager.env"
 else
-  echo "Service did not start. Bootstrap password retained in the root-only config for troubleshooting." >&2
+  echo "Service did not start; collecting diagnostics." >&2
+  systemctl status iyke-vps-manager --no-pager >&2 || true
+  journalctl -u iyke-vps-manager -n 80 --no-pager >&2 || true
+  echo "Bootstrap password retained in the root-only config for troubleshooting." >&2
+  exit 1
 fi
 
 echo
