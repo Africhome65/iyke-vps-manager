@@ -76,7 +76,7 @@ def test_ssh_user_creation_uses_generated_password_over_stdin(client, monkeypatc
     assert response.status_code == 200
     assert b"client01" in response.data
     assert len(calls) == 1
-    assert calls[0][0][-3:] == ["/test/helper", "create", "client01"][-3:] or calls[0][0][-2:] == ["create", "client01"]
+    assert calls[0][0][-3:] == ["create", "client01", "2099-12-31"]
     assert len(calls[0][1]["input"].strip()) >= 20
     assert " " not in calls[0][1]["input"].strip()
 
