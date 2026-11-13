@@ -882,13 +882,13 @@ if __name__ == "__main__":
     unit = f"iyke-vps-manager-xray-install-{os.getpid()}-{os.urandom(4).hex()}"
     command = [
         systemd_run, "--quiet", "--wait", "--pipe", "--collect",
-        f"--unit={unit}", "--property=RuntimeMaxSec=600",
+        f"--unit={unit}", "--property=RuntimeMaxSec=300",
         "--setenv=DEBIAN_FRONTEND=noninteractive",
         "/bin/bash", "-c", shell_script,
     ]
     try:
         result = subprocess.run(command, text=True, capture_output=True,
-                                check=True, timeout=660)
+                                check=True, timeout=330)
     except subprocess.TimeoutExpired:
         fail("Xray installation timed out")
     except subprocess.CalledProcessError as exc:
