@@ -63,6 +63,17 @@ chmod -R u=rwX,g=rX,o= "$APP_DIR"
 chown -R "$SERVICE_USER":"$SERVICE_USER" "$DATA_DIR"
 systemctl daemon-reload
 systemctl enable --now iyke-vps-manager
+for attempt in $(seq 1 15); do
+  if systemctl is-active --quiet iyke-vps-manager; then break; fi
+  sleep 2
+done
+if systemctl is-active --quiet iyke-vps-manager; then
+  # The first administrator is now stored as a password hash in SQLite.
+  # Remove the one-time plaintext bootstrap secret from future service environments.
+  sed -i '/^IYKE_BOOTSTRAP_PASSWORD=/d' "$ETC_DIR/manager.env"
+else
+  echo "Service did not start. Bootstrap password retained in the root-only config for troubleshooting." >&2
+fi
 
 echo
 echo "Iyke VPS Manager installation finished."
