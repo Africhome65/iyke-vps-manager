@@ -191,10 +191,14 @@ def list_accounts(managed):
             continue
         expiry = ""
         try:
-            expiry = run(["chage", "-l", name]).split("Account expires:", 1)[1].strip()
-            if expiry.lower() in {"never", "never expires"}:
-                expiry = ""
-        except (SystemExit, IndexError):
+            chage_output = run(["chage", "-l", name])
+            match = re.search(r"^\\s*Account expires\\s*:\\s*(.*?)\\s*$",
+                              chage_output, re.MULTILINE)
+            if match:
+                expiry = match.group(1)
+                if expiry.lower() in {"never", "never expires"}:
+                    expiry = ""
+        except SystemExit:
             expiry = ""
         rows.append({"username": name, "uid": numeric_uid, "home": home,
                      "shell": shell, "expiry": expiry})
