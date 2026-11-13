@@ -132,3 +132,95 @@ def test_vpn_status_reports_wireguard_interfaces(monkeypatch):
     assert status["wireguard"]["installed"] is True
     assert status["wireguard"]["interfaces"] == [{"name": "wg0", "status": "active"}]
     assert status["openvpn"] == {"installed": False, "instances": []}
+
+
+def test_wireguard_install_refuses_existing_config(monkeypatch, tmp_path):
+    config_dir = tmp_path / "wireguard"
+    config_dir.mkdir()
+    (config_dir / "wg0.conf").write_text("keep me", encoding="utf-8")
+    monkeypatch.setattr(helper, "_secure_wireguard_dir", lambda: str(config_dir))
+    monkeypatch.setattr(helper.os.path, "lexists", lambda path: path.endswith("wg0.conf"))
+    monkeypatch.setattr(helper.subprocess, "run", lambda *a, **k: pytest.fail("must not install over existing config"))
+    with pytest.raises(SystemExit):
+        helper.wireguard_install()
+
+
+def test_wireguard_service_validates_state():
+    with pytest.raises(SystemExit):
+        helper.wireguard_service("restart")
+
+
+def test_wireguard_config_must_be_manager_owned(monkeypatch, tmp_path):
+    config_dir = tmp_path / "wireguard"
+    config_dir.mkdir()
+    config = config_dir / "wg0.conf"
+    config.write_text("[Interface]\nPrivateKey = " + "A" * 43 + "=\nListenPort = 51820\n", encoding="utf-8")
+    config.chmod(0o600)
+    monkeypatch.setattr(helper, "_secure_wireguard_dir", lambda: str(config_dir))
+    monkeypatch.setattr(helper, "_read_root_file", lambda path, mode_mask=0o077: config.read_text(encoding="utf-8"))
+    monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/bin/wg")
+    with pytest.raises(SystemExit):
+        helper._check_wg_config()
+
+
+def test_wireguard_config_manager_marker_and_port_are_validated(monkeypatch, tmp_path):
+    config_dir = tmp_path / "wireguard"
+    config_dir.mkdir()
+    config = config_dir / "wg0.conf"
+    config.write_text("# Managed by Iyke VPS Manager; do not edit manually.\n[Interface]\nPrivateKey = " + "A" * 43 + "=\nListenPort = 51820\n", encoding="utf-8")
+    config.chmod(0o600)
+    monkeypatch.setattr(helper, "_secure_wireguard_dir", lambda: str(config_dir))
+    monkeypatch.setattr(helper, "_read_root_file", lambda path, mode_mask=0o077: config.read_text(encoding="utf-8"))
+    monkeypatch.setattr(helper.shutil, "which", lambda command: "/usr/bin/wg")
+    assert "ListenPort = 51820" in helper._check_wg_config()
+
+
+def test_wireguard_endpoint_validation():
+    assert helper._valid_endpoint("vpn.example.com:51820")
+    assert helper._valid_endpoint("8.8.8.8:51820")
+    assert not helper._valid_endpoint("vpn.example.com")
+    assert not helper._valid_endpoint("vpn.example.com:99999")
+    assert not helper._valid_endpoint("https://vpn.example.com:51820")
+
+
+def test_wireguard_peer_address_allocation():
+    assert helper._allocate_peer_address({}) == "10.66.0.2/32"
+    peers = {"phone": {"address": "10.66.0.2/32"}}
+    assert helper._allocate_peer_address(peers) == "10.66.0.3/32"
+
+
+def test_wireguard_peer_name_rejects_path_traversal():
+    with pytest.raises(SystemExit):
+        helper._valid_peer_name("../escape")
+
+
+def test_wireguard_peer_config_has_only_private_subnet_routes():
+    config = helper._peer_config_text("[Interface]\nAddress = 10.66.0.1/24\n", {
+        "phone": {"public_key": "abc", "address": "10.66.0.2/32", "endpoint": "vpn.example.com:51820"}
+    })
+    assert "AllowedIPs = 10.66.0.2/32" in config
+    assert "AllowedIPs = 0.0.0.0/0" not in config
+
+
+def test_wireguard_peer_registry_accepts_client_host_address(monkeypatch, tmp_path):
+    payload = json.dumps({
+        "phone01": {
+            "public_key": "A" * 43 + "=",
+            "address": "10.66.0.2/32",
+            "endpoint": "vpn.example.com:51820"
+        }
+    })
+    monkeypatch.setattr(helper, "_secure_wireguard_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(helper.os.path, "lexists", lambda path: True)
+    monkeypatch.setattr(helper, "_read_root_file", lambda path: payload)
+    assert helper._peer_registry()["phone01"]["address"] == "10.66.0.2/32"
+
+
+def test_wireguard_service_start_is_not_persistent(monkeypatch):
+    calls = []
+    monkeypatch.setattr(helper.os, "lstat", lambda path: type("Info", (), {
+        "st_mode": stat.S_IFREG | 0o600, "st_uid": 0
+    })())
+    monkeypatch.setattr(helper, "run", lambda args, *a, **k: calls.append(args))
+    assert helper.wireguard_service("start")["requested_state"] == "start"
+    assert calls == [["systemctl", "start", "wg-quick@wg0.service"]]

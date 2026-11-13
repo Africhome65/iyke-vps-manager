@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block title %}VPN services · Iyke VPS Manager{% endblock %}
 {% block content %}
-<div class="page-heading"><div><div class="eyebrow">NETWORK SERVICES</div><h1>VPN services</h1><p class="muted">Read-only status for supported VPN software on this VPS.</p></div></div>
-<div class="notice"><b>Safe status check</b><span>This page only checks installed software, configured instance names and service states. It does not install, start, stop or change VPN services.</span></div>
+<div class="page-heading"><div><div class="eyebrow">NETWORK SERVICES</div><h1>VPN services</h1><p class="muted">Install and manage supported VPN services on this VPS.</p></div></div>
+<div class="notice"><b>WireGuard setup safety</b><span>Client profiles use split-tunnel routing for the private VPN subnet only. Public internet routing, firewall/NAT rules and IP forwarding are not configured automatically. Enter the VPS public IP or DNS name and UDP port that you intend to use.</span></div>
 <div class="vpn-grid">
   <section class="panel">
     <div class="section-heading"><div><h2>WireGuard</h2><p class="muted">Modern, lightweight VPN</p></div><span class="vpn-state {{ 'available' if vpn.wireguard.installed else 'missing' }}">{{ 'Installed' if vpn.wireguard.installed else 'Not installed' }}</span></div>
@@ -10,15 +10,37 @@
       {% if vpn.wireguard.interfaces %}
         <div class="vpn-list">{% for item in vpn.wireguard.interfaces %}<div class="vpn-instance"><b>{{ item.name }}</b><span class="vpn-state {{ 'available' if item.status == 'active' else 'missing' }}">{{ item.status|title }}</span></div>{% endfor %}</div>
       {% else %}<p class="empty">WireGuard is installed, but no active interfaces were reported.</p>{% endif %}
-    {% else %}<p class="muted">Install WireGuard to enable interface management in a future release.</p>{% endif %}
+      <form method="post" action="{{ url_for('control_wireguard') }}" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="state" value="start"><button type="submit">Start WireGuard</button></form>
+      <form method="post" action="{{ url_for('control_wireguard') }}" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="state" value="stop"><button type="submit" class="secondary">Stop WireGuard</button></form>
+      <hr>
+      <h3>Create a client</h3>
+      <form method="post" action="{{ url_for('create_wireguard_peer') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label for="wg-name">Client name</label><input id="wg-name" name="name" maxlength="31" pattern="[a-z][a-z0-9_-]{0,30}" required placeholder="phone01">
+        <label for="wg-endpoint">Server endpoint (public IP or hostname:UDP port)</label><input id="wg-endpoint" name="endpoint" maxlength="255" required placeholder="vpn.example.com:51820">
+        <button type="submit">Create client profile</button>
+      </form>
+      <p class="muted">Each client gets a unique private key, tunnel address, downloadable .conf file and QR code. Keep profiles secret.</p>
+      <h3>WireGuard clients</h3>
+      {% if peers %}
+        <div class="vpn-list">{% for peer in peers %}
+          <div class="vpn-instance"><div><b>{{ peer.name }}</b><small class="muted">{{ peer.address }} · {{ peer.endpoint }}</small></div>
+            <div class="inline"><a href="{{ url_for('download_wireguard_profile', name=peer.name) }}">Download</a><a href="{{ url_for('wireguard_profile_qr', name=peer.name) }}" target="_blank" rel="noopener">QR code</a>
+            <form method="post" action="{{ url_for('revoke_wireguard_peer', name=peer.name) }}" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="secondary" type="submit">Revoke</button></form></div>
+          </div>
+        {% endfor %}</div>
+      {% else %}<p class="empty">No WireGuard clients have been created yet.</p>{% endif %}
+    {% else %}
+      <p class="muted">Install the WireGuard package and create a protected server configuration.</p>
+      <form method="post" action="{{ url_for('install_wireguard') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit">Install WireGuard</button></form>
+    {% endif %}
   </section>
   <section class="panel">
     <div class="section-heading"><div><h2>OpenVPN</h2><p class="muted">Open-source SSL/TLS VPN</p></div><span class="vpn-state {{ 'available' if vpn.openvpn.installed else 'missing' }}">{{ 'Installed' if vpn.openvpn.installed else 'Not installed' }}</span></div>
     {% if vpn.openvpn.installed %}
-      {% if vpn.openvpn.instances %}
-        <div class="vpn-list">{% for item in vpn.openvpn.instances %}<div class="vpn-instance"><b>{{ item.name }}</b><span class="vpn-state {{ 'available' if item.status == 'active' else 'missing' }}">{{ item.status|title }}</span></div>{% endfor %}</div>
+      {% if vpn.openvpn.instances %}<div class="vpn-list">{% for item in vpn.openvpn.instances %}<div class="vpn-instance"><b>{{ item.name }}</b><span class="vpn-state {{ 'available' if item.status == 'active' else 'missing' }}">{{ item.status|title }}</span></div>{% endfor %}</div>
       {% else %}<p class="empty">OpenVPN is installed, but no server configuration files were found.</p>{% endif %}
-    {% else %}<p class="muted">Install OpenVPN to enable instance management in a future release.</p>{% endif %}
+    {% else %}<p class="muted">OpenVPN installation and client management will be added after the WireGuard workflow is tested.</p>{% endif %}
   </section>
 </div>
 {% endblock %}
