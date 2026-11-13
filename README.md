@@ -15,7 +15,7 @@ The first release provides:
 - WireGuard client creation and revocation with unique tunnel addresses
 - Authenticated, non-cacheable client profile downloads and QR-code display
 
-WireGuard installation creates a private server configuration but does not automatically start the interface, change firewall rules, enable IP forwarding, or configure internet egress. Each client requires an administrator-supplied public VPS hostname/IP and UDP port. Client profiles currently route only the private VPN subnet (10.66.0.0/24); full-tunnel internet access is not configured. OpenVPN discovery remains read-only and its installation/client management are planned separately.
+WireGuard installation creates a private server configuration but does not automatically start the interface, change firewall rules, enable IP forwarding, or configure internet egress. The panel attempts to detect the public IPv4 address of the VPS hosting that installation and pre-fills it as the client endpoint on UDP port 51820. Administrators can replace it with their own DNS name or another public address. Detection requires outbound HTTPS access to api.ipify.org; if unavailable, the endpoint can be entered manually. Each installation detects its own VPS address and keeps its own keys and client registry separate. Client profiles currently route only the private VPN subnet (10.66.0.0/24); full-tunnel internet access is not configured. OpenVPN discovery remains read-only and its installation/client management are planned separately.
 
 ## Requirements
 
