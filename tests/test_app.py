@@ -214,4 +214,4 @@ def test_xray_install_route_requires_login_and_calls_helper(client, monkeypatch)
     assert response.status_code == 302
     request = __import__("json").loads(calls[0][1]["input"])
     assert request == {"action": "xray_install"}
-    assert calls[0][1]["timeout"] == 660
+    assert calls[0][1]["timeout"] == 330
