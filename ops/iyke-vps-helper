@@ -89,12 +89,14 @@ def load_registry():
     finally:
         if fd >= 0:
             os.close(fd)
-    if (not isinstance(data, list) or any(
+    if (not isinstance(data, dict) or any(
             not isinstance(name, str) or not NAME.fullmatch(name)
-            or name in {"root", "nobody"} for name in data
-    ) or len(data) != len(set(data))):
+            or name in {"root", "nobody"} or isinstance(uid, bool)
+            or not isinstance(uid, int) or uid < SYSTEM_UID_MIN
+            for name, uid in data.items()
+    )):
         fail("Managed-account registry contains invalid data")
-    return set(data)
+    return data
 
 
 def save_registry(names):
