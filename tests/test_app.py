@@ -142,3 +142,19 @@ def test_wireguard_service_rejects_invalid_state(client, monkeypatch):
     login(client)
     monkeypatch.setattr("app.subprocess.run", lambda *a, **k: pytest.fail("helper should not run"))
     assert client.post("/vpn/wireguard/service", data={"state":"restart"}).status_code == 400
+
+
+def test_wireguard_profile_download_requires_login_and_is_not_cached(client, monkeypatch):
+    assert client.get("/vpn/wireguard/peers/phone/profile").status_code == 302
+    login(client)
+    monkeypatch.setattr("app.run_helper", lambda *a, **k: __import__("json").dumps({"profile":"[Interface]\nPrivateKey = secret\n"}))
+    response = client.get("/vpn/wireguard/peers/phone/profile")
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store, private, max-age=0"
+    assert b"PrivateKey" in response.data
+
+
+def test_wireguard_profile_revoke_requires_post_and_login(client, monkeypatch):
+    assert client.get("/vpn/wireguard/peers/phone/revoke").status_code == 302
+    login(client)
+    assert client.post("/vpn/wireguard/peers/phone/revoke").status_code == 302

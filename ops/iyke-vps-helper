@@ -3,6 +3,7 @@
 import datetime
 import fcntl
 import json
+import ipaddress
 import os
 import re
 import shutil
@@ -372,12 +373,268 @@ def wireguard_service(state):
     return {"interface": "wg0", "requested_state": state}
 
 
+
+WG_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,30}$")
+WG_KEY = re.compile(r"^[A-Za-z0-9+/]{43}=$")
+WG_SUBNET = "10.66.0.0/24"
+
+
+def _read_root_file(path, mode_mask=0o077):
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError:
+        fail("Required WireGuard file is unavailable")
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
+                or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) & mode_mask):
+            fail("WireGuard file has unsafe ownership or permissions")
+        with os.fdopen(fd, "r", encoding="utf-8") as source:
+            fd = -1
+            return source.read()
+    except (OSError, UnicodeDecodeError):
+        fail("Unable to read WireGuard file securely")
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
+def _peer_registry():
+    directory = _secure_wireguard_dir()
+    path = os.path.join(directory, "peers.json")
+    try:
+        raw = _read_root_file(path)
+    except SystemExit:
+        if not os.path.lexists(path):
+            return {}
+        raise
+    try:
+        peers = json.loads(raw)
+    except json.JSONDecodeError:
+        fail("WireGuard peer registry is corrupted")
+    if not isinstance(peers, dict):
+        fail("WireGuard peer registry is invalid")
+    for name, peer in peers.items():
+        if (not isinstance(name, str) or not WG_NAME.fullmatch(name)
+                or name in {"root", "server"} or not isinstance(peer, dict)
+                or set(peer) != {"public_key", "address", "endpoint"}):
+            fail("WireGuard peer registry contains invalid data")
+        if not isinstance(peer["public_key"], str) or not WG_KEY.fullmatch(peer["public_key"]):
+            fail("WireGuard peer registry contains an invalid key")
+        try:
+            address = ipaddress.ip_interface(peer["address"])
+        except (ValueError, TypeError):
+            fail("WireGuard peer registry contains an invalid address")
+        if address.network.with_prefixlen != WG_SUBNET or address.ip not in ipaddress.ip_network(WG_SUBNET):
+            fail("WireGuard peer registry contains an out-of-range address")
+        if not isinstance(peer["endpoint"], str) or not _valid_endpoint(peer["endpoint"]):
+            fail("WireGuard peer registry contains an invalid endpoint")
+    return peers
+
+
+def _save_peer_registry(peers):
+    path = os.path.join(_secure_wireguard_dir(), "peers.json")
+    _atomic_secret_file(path, json.dumps(peers, sort_keys=True, separators=(",", ":")) + "\n", 0o600)
+
+
+def _valid_endpoint(value):
+    if not isinstance(value, str) or len(value) > 255 or value.count(":") < 1:
+        return False
+    host, separator, port_text = value.rpartition(":")
+    if not separator or not port_text.isdigit() or not 1 <= int(port_text) <= 65535:
+        return False
+    if not host or any(ch.isspace() for ch in host) or "/" in host or "\\" in host:
+        return False
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        return bool(re.fullmatch(
+            r"(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*",
+            host
+        ))
+
+
+def _check_wg_config():
+    path = "/etc/wireguard/wg0.conf"
+    config = _read_root_file(path)
+    if "[Interface]" not in config or "PrivateKey =" not in config or "ListenPort =" not in config:
+        fail("WireGuard server configuration is incomplete")
+    if not shutil.which("wg"):
+        fail("WireGuard is not installed")
+    return config
+
+
+def _wg_active():
+    result = subprocess.run(["wg", "show", "wg0"], text=True, capture_output=True,
+                            check=False, timeout=10)
+    return result.returncode == 0
+
+
+def _peer_config_text(config, peers):
+    base = re.split(r"(?m)^# Iyke peer: [a-z][a-z0-9_-]{0,30}\n", config, maxsplit=1)[0].rstrip()
+    blocks = []
+    for name in sorted(peers):
+        peer = peers[name]
+        blocks.append(f"# Iyke peer: {name}\n[Peer]\nPublicKey = {peer['public_key']}\nAllowedIPs = {peer['address']}\n")
+    return base + ("\n\n" + "\n".join(blocks) if blocks else "") + "\n"
+
+
+def _allocate_peer_address(peers):
+    used = {str(ipaddress.ip_interface(peer["address"]).ip) for peer in peers.values()}
+    for host in range(2, 255):
+        candidate = f"10.66.0.{host}"
+        if candidate not in used:
+            return candidate + "/32"
+    fail("The WireGuard client address pool is full")
+
+
+def _valid_peer_name(name):
+    if not isinstance(name, str) or not WG_NAME.fullmatch(name) or name in {"root", "server"}:
+        fail("Client name must use lowercase letters, numbers, hyphens or underscores")
+    return name
+
+
+def wireguard_list_peers():
+    _check_wg_config()
+    peers = _peer_registry()
+    return [{"name": name, "address": peers[name]["address"], "endpoint": peers[name]["endpoint"]}
+            for name in sorted(peers)]
+
+
+def wireguard_create_peer(name, endpoint):
+    name = _valid_peer_name(name)
+    if not _valid_endpoint(endpoint):
+        fail("Endpoint must be a public IP address or hostname followed by :port")
+    config = _check_wg_config()
+    peers = _peer_registry()
+    if name in peers:
+        fail("A WireGuard client with that name already exists")
+    address = _allocate_peer_address(peers)
+    private_key = run(["wg", "genkey"])
+    if not WG_KEY.fullmatch(private_key):
+        fail("WireGuard generated an invalid client key")
+    public_key = run(["wg", "pubkey"], private_key + "\n")
+    if not WG_KEY.fullmatch(public_key):
+        fail("WireGuard generated an invalid client public key")
+    server_public = _read_root_file("/etc/wireguard/server.pub").strip()
+    if not WG_KEY.fullmatch(server_public):
+        fail("WireGuard server public key is invalid")
+    client_config = (
+        "[Interface]\n"
+        f"PrivateKey = {private_key}\n"
+        f"Address = {address}\n"
+        "DNS = 1.1.1.1\n\n"
+        "[Peer]\n"
+        f"PublicKey = {server_public}\n"
+        f"Endpoint = {endpoint}\n"
+        f"AllowedIPs = {WG_SUBNET}\n"
+        "PersistentKeepalive = 25\n"
+    )
+    updated = dict(peers)
+    updated[name] = {"public_key": public_key, "address": address, "endpoint": endpoint}
+    directory = _secure_wireguard_dir()
+    clients_dir = os.path.join(directory, "clients")
+    try:
+        os.mkdir(clients_dir, 0o700)
+    except FileExistsError:
+        pass
+    client_info = os.lstat(clients_dir)
+    if not stat.S_ISDIR(client_info.st_mode) or client_info.st_uid != 0:
+        fail("WireGuard client profile directory is unsafe")
+    os.chmod(clients_dir, 0o700)
+    profile_path = os.path.join(clients_dir, name + ".conf")
+    if os.path.lexists(profile_path):
+        fail("A client profile file already exists; refusing to overwrite it")
+    active = _wg_active()
+    _atomic_secret_file(profile_path, client_config, 0o600)
+    try:
+        _atomic_secret_file(os.path.join(directory, "wg0.conf"),
+                            _peer_config_text(config, updated), 0o600)
+        _save_peer_registry(updated)
+        if active:
+            run(["wg", "set", "wg0", "peer", public_key, "allowed-ips", address])
+    except SystemExit:
+        _atomic_secret_file(os.path.join(directory, "wg0.conf"), config, 0o600)
+        try:
+            os.unlink(profile_path)
+        except OSError:
+            pass
+        _save_peer_registry(peers)
+        if active:
+            try:
+                run(["wg", "set", "wg0", "peer", public_key, "remove"])
+            except SystemExit:
+                pass
+        raise
+    return {"name": name, "address": address}
+
+
+def wireguard_get_profile(name):
+    name = _valid_peer_name(name)
+    peers = _peer_registry()
+    if name not in peers:
+        fail("WireGuard client does not exist")
+    path = os.path.join("/etc/wireguard/clients", name + ".conf")
+    return _read_root_file(path)
+
+
+def wireguard_revoke_peer(name):
+    name = _valid_peer_name(name)
+    config = _check_wg_config()
+    peers = _peer_registry()
+    if name not in peers:
+        fail("WireGuard client does not exist")
+    peer = peers[name]
+    updated = dict(peers)
+    del updated[name]
+    active = _wg_active()
+    if active:
+        run(["wg", "set", "wg0", "peer", peer["public_key"], "remove"])
+    try:
+        _atomic_secret_file("/etc/wireguard/wg0.conf", _peer_config_text(config, updated), 0o600)
+        _save_peer_registry(updated)
+        os.unlink(os.path.join("/etc/wireguard/clients", name + ".conf"))
+    except (SystemExit, OSError):
+        _atomic_secret_file("/etc/wireguard/wg0.conf", config, 0o600)
+        _save_peer_registry(peers)
+        if active:
+            try:
+                run(["wg", "set", "wg0", "peer", peer["public_key"],
+                     "allowed-ips", peer["address"]])
+            except SystemExit:
+                pass
+        fail("Unable to revoke client cleanly; the previous configuration was restored")
+    return {"name": name, "revoked": True}
+
+
+
 def handle_vpn_action(request):
     action = request.get("action")
     if action == "wireguard_install":
         if set(request) != {"action"}:
             fail("Unexpected request fields")
         print(json.dumps(wireguard_install()))
+        return True
+    if action == "wireguard_peers":
+        if set(request) != {"action"}:
+            fail("Unexpected request fields")
+        print(json.dumps(wireguard_list_peers()))
+        return True
+    if action == "wireguard_create_peer":
+        if set(request) != {"action", "name", "endpoint"}:
+            fail("Unexpected request fields")
+        print(json.dumps(wireguard_create_peer(request["name"], request["endpoint"])))
+        return True
+    if action == "wireguard_get_profile":
+        if set(request) != {"action", "name"}:
+            fail("Unexpected request fields")
+        print(json.dumps({"profile": wireguard_get_profile(request["name"])}))
+        return True
+    if action == "wireguard_revoke_peer":
+        if set(request) != {"action", "name"}:
+            fail("Unexpected request fields")
+        print(json.dumps(wireguard_revoke_peer(request["name"])))
         return True
     if action == "wireguard_service":
         if set(request) != {"action", "state"}:

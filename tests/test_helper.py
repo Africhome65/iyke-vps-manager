@@ -148,3 +148,30 @@ def test_wireguard_install_refuses_existing_config(monkeypatch, tmp_path):
 def test_wireguard_service_validates_state():
     with pytest.raises(SystemExit):
         helper.wireguard_service("restart")
+
+
+def test_wireguard_endpoint_validation():
+    assert helper._valid_endpoint("vpn.example.com:51820")
+    assert helper._valid_endpoint("203.0.113.5:51820")
+    assert not helper._valid_endpoint("vpn.example.com")
+    assert not helper._valid_endpoint("vpn.example.com:99999")
+    assert not helper._valid_endpoint("https://vpn.example.com:51820")
+
+
+def test_wireguard_peer_address_allocation():
+    assert helper._allocate_peer_address({}) == "10.66.0.2/32"
+    peers = {"phone": {"address": "10.66.0.2/32"}}
+    assert helper._allocate_peer_address(peers) == "10.66.0.3/32"
+
+
+def test_wireguard_peer_name_rejects_path_traversal():
+    with pytest.raises(SystemExit):
+        helper._valid_peer_name("../escape")
+
+
+def test_wireguard_peer_config_has_only_private_subnet_routes():
+    config = helper._peer_config_text("[Interface]\nAddress = 10.66.0.1/24\n", {
+        "phone": {"public_key": "abc", "address": "10.66.0.2/32", "endpoint": "vpn.example.com:51820"}
+    })
+    assert "AllowedIPs = 10.66.0.2/32" in config
+    assert "AllowedIPs = 0.0.0.0/0" not in config

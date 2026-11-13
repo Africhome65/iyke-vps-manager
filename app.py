@@ -10,7 +10,7 @@ from functools import wraps
 from pathlib import Path
 
 import psutil
-from flask import Flask, abort, flash, jsonify, redirect, render_template, request, url_for
+from flask import Flask, Response, abort, flash, jsonify, redirect, render_template, request, url_for
 from flask_login import LoginManager, UserMixin, current_user, login_required, login_user, logout_user
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -311,6 +311,84 @@ def create_app(test_config=None):
             run_helper("wireguard_service", state=state)
             audit(f"wireguard_{state}", f"Requested WireGuard interface {state}")
             flash(f"WireGuard interface {state} requested.", "success")
+        except RuntimeError as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("vpn_services"))
+
+
+    @app.get("/vpn/wireguard/peers")
+    @login_required
+    def wireguard_peers():
+        try:
+            peers = json.loads(run_helper("wireguard_peers") or "[]")
+        except (RuntimeError, json.JSONDecodeError) as exc:
+            peers = []
+            flash(str(exc), "error")
+        return render_template("vpn.html", vpn={"wireguard": {"installed": True, "interfaces": []},
+            "openvpn": {"installed": False, "instances": []}}, peers=peers)
+
+    @app.post("/vpn/wireguard/peers")
+    @login_required
+    def create_wireguard_peer():
+        name = request.form.get("name", "").strip().lower()
+        endpoint = request.form.get("endpoint", "").strip()
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name) or name in {"root", "server"}:
+            flash("Use a client name with lowercase letters, numbers, hyphens or underscores.", "error")
+            return redirect(url_for("vpn_services"))
+        try:
+            result = json.loads(run_helper("wireguard_create_peer", name=name, endpoint=endpoint) or "{}")
+            audit("wireguard_peer_created", f"Created WireGuard client {name} ({result.get('address', '')})")
+            flash(f"WireGuard client {name} created. Download its profile or scan its QR code now.", "success")
+        except (RuntimeError, json.JSONDecodeError) as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("vpn_services"))
+
+    @app.get("/vpn/wireguard/peers/<name>/profile")
+    @login_required
+    def download_wireguard_profile(name):
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name) or name in {"root", "server"}:
+            abort(404)
+        try:
+            result = json.loads(run_helper("wireguard_get_profile", name=name))
+            profile = result["profile"]
+        except (RuntimeError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            abort(404, description=str(exc))
+        response = Response(profile, mimetype="application/octet-stream")
+        response.headers["Content-Disposition"] = f'attachment; filename="{name}.conf"'
+        response.headers["Cache-Control"] = "no-store, private, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        return response
+
+    @app.get("/vpn/wireguard/peers/<name>/qr")
+    @login_required
+    def wireguard_profile_qr(name):
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name) or name in {"root", "server"}:
+            abort(404)
+        try:
+            import io
+            import qrcode
+            from qrcode.image.svg import SvgPathImage
+            result = json.loads(run_helper("wireguard_get_profile", name=name))
+            profile = result["profile"]
+            image = qrcode.make(profile, image_factory=SvgPathImage, border=4)
+            output = io.BytesIO()
+            image.save(output)
+            response = Response(output.getvalue(), mimetype="image/svg+xml")
+            response.headers["Cache-Control"] = "no-store, private, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            return response
+        except (RuntimeError, json.JSONDecodeError, ImportError, KeyError, TypeError):
+            abort(404)
+
+    @app.post("/vpn/wireguard/peers/<name>/revoke")
+    @login_required
+    def revoke_wireguard_peer(name):
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name) or name in {"root", "server"}:
+            abort(404)
+        try:
+            run_helper("wireguard_revoke_peer", name=name)
+            audit("wireguard_peer_revoked", f"Revoked WireGuard client {name}")
+            flash(f"WireGuard client {name} revoked and its saved profile removed.", "success")
         except RuntimeError as exc:
             flash(str(exc), "error")
         return redirect(url_for("vpn_services"))
