@@ -97,7 +97,7 @@ def main():
             fail("Invalid generated password")
         run(["useradd", "--create-home", "--shell", "/bin/bash", "--expiredate", expiry, name])
         try:
-            run(["chpasswd"], f"{name}:{password}\\n")
+            run(["chpasswd"], f"{name}:{password}\n")
         except SystemExit:
             run(["userdel", "--remove", name])
             raise
