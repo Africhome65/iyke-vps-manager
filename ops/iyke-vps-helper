@@ -73,7 +73,7 @@ def load_registry():
     try:
         fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     except FileNotFoundError:
-        return set()
+        return {}
     except OSError:
         fail("Unable to open managed-account registry")
     try:
