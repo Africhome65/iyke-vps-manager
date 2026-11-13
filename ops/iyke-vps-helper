@@ -695,6 +695,111 @@ def wireguard_revoke_peer(name):
 
 
 
+
+
+XRAY_DOMAIN_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+XRAY_UUID = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+)
+
+
+def _valid_xray_domain(value):
+    """Validate a public DNS hostname; reject URL syntax, IPs and unsafe Nginx tokens."""
+    if not isinstance(value, str) or len(value) > 253 or value != value.lower():
+        fail("Enter a lowercase DNS hostname, without a scheme, port or trailing dot")
+    labels = value.split(".")
+    if len(labels) < 2 or any(not XRAY_DOMAIN_LABEL.fullmatch(label) for label in labels):
+        fail("Enter a valid fully-qualified DNS hostname")
+    if any(label.startswith("xn--") and len(label) < 5 for label in labels):
+        fail("Invalid internationalized DNS label")
+    return value
+
+
+def _xray_listener_config(vless_clients, vmess_clients):
+    """Build a minimal Xray config with separate loopback-only WebSocket inbounds."""
+    for group in (vless_clients, vmess_clients):
+        if not isinstance(group, list):
+            fail("Invalid Xray client registry")
+        for client in group:
+            if (not isinstance(client, dict)
+                    or not isinstance(client.get("id"), str)
+                    or not XRAY_UUID.fullmatch(client["id"])):
+                fail("Xray client registry contains an invalid UUID")
+    return {
+        "log": {"loglevel": "warning"},
+        "inbounds": [
+            {
+                "listen": "127.0.0.1", "port": 10000, "protocol": "vless",
+                "settings": {
+                    "clients": [{"id": c["id"], "email": c.get("name", "client")}
+                                for c in vless_clients],
+                    "decryption": "none",
+                },
+                "streamSettings": {
+                    "network": "ws",
+                    "wsSettings": {"path": "/vless"},
+                },
+            },
+            {
+                "listen": "127.0.0.1", "port": 10001, "protocol": "vmess",
+                "settings": {
+                    "clients": [{"id": c["id"], "alterId": 0,
+                                 "email": c.get("name", "client")}
+                                for c in vmess_clients],
+                },
+                "streamSettings": {
+                    "network": "ws",
+                    "wsSettings": {"path": "/vmess"},
+                },
+            },
+        ],
+        "outbounds": [{"protocol": "freedom", "tag": "direct"}],
+    }
+
+
+def _xray_nginx_config(domain):
+    """Render the owned Nginx vhost; TLS is terminated by Nginx, not Xray."""
+    domain = _valid_xray_domain(domain)
+    return f"""server {{
+    listen 80;
+    listen [::]:80;
+    server_name {domain};
+    location ^~ /.well-known/acme-challenge/ {{
+        root /var/www/letsencrypt;
+        default_type text/plain;
+        try_files $uri =404;
+    }}
+    location / {{ return 301 https://$host$request_uri; }}
+}}
+
+server {{
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name {domain};
+    ssl_certificate /etc/letsencrypt/live/{domain}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{domain}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    location = /vless {{
+        proxy_pass http://127.0.0.1:10000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_read_timeout 3600s;
+    }}
+    location = /vmess {{
+        proxy_pass http://127.0.0.1:10001;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_read_timeout 3600s;
+    }}
+}}
+"""
+
+
 XRAY_INSTALLER_COMMIT = "1bce9c3a9630d72521643159080017d1c001bc71"
 XRAY_INSTALLER_URL = (
     "https://raw.githubusercontent.com/XTLS/Xray-install/"
