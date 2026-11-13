@@ -86,6 +86,9 @@ def test_invalid_username_is_rejected_before_helper(client, monkeypatch):
     monkeypatch.setattr("app.subprocess.run", lambda *a, **k: pytest.fail("helper should not run"))
     response = client.post("/users/create", data={
         "username": "root", "expiry": "2099-12-31"
-    }, follow_redirects=True)
-    assert response.status_code == 200
-    assert b"valid, non-system Linux username" in response.data
+    })
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/users")
+    with client.session_transaction() as session:
+        flashes = session.get("_flashes", [])
+    assert any("valid, non-system Linux username" in message for _, message in flashes)
