@@ -42,5 +42,14 @@
       {% else %}<p class="empty">OpenVPN is installed, but no server configuration files were found.</p>{% endif %}
     {% else %}<p class="muted">OpenVPN installation and client management will be added after the WireGuard workflow is tested.</p>{% endif %}
   </section>
+  <section class="panel">
+    <div class="section-heading"><div><h2>Xray-core</h2><p class="muted">Engine for VLESS and VMess</p></div><span class="vpn-state {{ 'available' if vpn.xray.installed else 'missing' }}">{{ 'Installed' if vpn.xray.installed else 'Not installed' }}</span></div>
+    {% if vpn.xray.installed %}
+      <div class="vpn-instance"><b>System service</b><span class="vpn-state {{ 'available' if vpn.xray.service == 'active' else 'missing' }}">{{ vpn.xray.service|title }}</span></div>
+    {% else %}
+      <p class="muted">Xray-core is not installed. Installation and per-VPS domain or REALITY configuration will be added in a separately reviewed step.</p>
+    {% endif %}
+    <p class="muted">This status check does not read or display Xray configuration files, credentials or private keys.</p>
+  </section>
 </div>
 {% endblock %}
