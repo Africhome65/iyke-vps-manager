@@ -11,7 +11,7 @@ import sys
 import tempfile
 from contextlib import contextmanager
 
-NAME = re.compile(r"^[a-z_][a-z0-9_-]{0,30}\\$?$")
+NAME = re.compile(r"^[a-z_][a-z0-9_-]{0,30}\$?$")
 SYSTEM_UID_MIN = 1000
 MAX_REQUEST_BYTES = 8192
 STATE_DIR = "/var/lib/iyke-vps-manager-state"
@@ -108,7 +108,7 @@ def save_registry(names):
         with os.fdopen(fd, "w", encoding="utf-8") as target:
             fd = -1
             json.dump(sorted(names), target, separators=(",", ":"))
-            target.write("\\n")
+            target.write("\n")
             target.flush()
             os.fsync(target.fileno())
         os.replace(temporary, state_path("managed-users.json"))
@@ -220,14 +220,14 @@ def main():
             expiry = valid_expiry(request["expiry"])
             password = request["password"]
             if (not isinstance(password, str) or len(password) < 20 or len(password) > 256
-                    or any(ch in password for ch in "\\r\\n:")):
+                    or any(ch in password for ch in "\r\n:")):
                 fail("Invalid generated password")
             if name in managed or account_exists(name):
                 fail("An account with that username already exists")
             run(["useradd", "--create-home", "--shell", "/bin/bash",
                  "--expiredate", expiry, name])
             try:
-                run(["chpasswd"], f"{name}:{password}\\n")
+                run(["chpasswd"], f"{name}:{password}\n")
                 save_registry(managed | {name})
             except SystemExit:
                 try:
