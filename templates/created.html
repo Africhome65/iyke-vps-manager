@@ -3,7 +3,7 @@
 {% block content %}
 <section class="panel result-panel">
   <div class="success-mark">✓</div><div class="eyebrow">ACCOUNT CREATED</div><h1>{{ username }}</h1><p class="muted">The Linux account has been created and will expire on {{ expiry }}.</p>
-  <label>Temporary password</label><div class="secret"><code id="temp-password">{{ password }}</code><button class="button small" type="button" onclick="navigator.clipboard.writeText(document.getElementById('temp-password').textContent)">Copy</button></div>
+  <label>Temporary password</label><div class="secret"><code id="temp-password">{{ password }}</code><button class="button small" type="button" data-copy-target="temp-password">Copy</button></div>
   <div class="alert error">Copy this password now. It will not be shown again after you leave this page. Share it securely with the account owner.</div>
   <a class="button primary" href="{{ url_for('users') }}">Back to SSH users</a>
 </section>
