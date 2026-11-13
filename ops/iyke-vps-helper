@@ -23,9 +23,16 @@ def run(argv, input_text=None):
     return result.stdout.strip()
 
 
-def valid_name(value):
+def valid_name(value, must_exist=False):
     if not NAME.fullmatch(value) or value in {"root", "nobody"}:
         fail("Invalid or protected username")
+    if must_exist:
+        try:
+            uid = int(run(["id", "-u", value]))
+        except (ValueError, SystemExit):
+            fail("User account does not exist")
+        if uid < SYSTEM_UID_MIN:
+            fail("Refusing to modify a system account")
     return value
 
 
@@ -56,7 +63,7 @@ def main():
         print(json.dumps(rows))
         return
     if action == "create" and len(sys.argv) == 4:
-        name = valid_name(sys.argv[2])
+        name = valid_name(sys.argv[2], must_exist=True)
         expiry = sys.argv[3]
         try:
             parsed = datetime.date.fromisoformat(expiry)
@@ -89,7 +96,7 @@ def main():
         print("updated")
         return
     if action == "delete" and len(sys.argv) == 3:
-        name = valid_name(sys.argv[2])
+        name = valid_name(sys.argv[2], must_exist=True)
         run(["id", name])
         run(["userdel", "--remove", name])
         print("deleted")
