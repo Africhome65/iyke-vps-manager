@@ -99,8 +99,8 @@ def test_list_accounts_parses_chage_aligned_colon(monkeypatch):
         if args == ["getent", "passwd"]:
             return "paneltest01:x:1001:1001::/home/paneltest01:/bin/bash"
         if args == ["chage", "-l", "paneltest01"]:
-            return ("Last password change                                    : Nov 13, 2026\\n"
-                    "Account expires                                         : Nov 30, 2026\\n"
+            return ("Last password change                                    : Nov 13, 2026\n"
+                    "Account expires                                         : Nov 30, 2026\n"
                     "Password expires                                        : never")
         raise AssertionError(args)
 
