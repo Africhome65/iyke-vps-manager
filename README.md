@@ -5,7 +5,7 @@ A modular, self-hosted VPS administration panel for Ubuntu and Debian.
 ## Current release
 
 The first release provides:
-- Administrator login with password hashing and CSRF protection
+- Administrator login and password changes with password hashing, CSRF protection and login throttling
 - Dashboard with CPU, memory, disk and uptime metrics
 - SSH account listing, creation, expiry changes and deletion
 - A restricted privileged helper; the Flask web process is not run as root
