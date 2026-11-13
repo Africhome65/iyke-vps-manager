@@ -411,12 +411,15 @@ def test_xray_certificate_validation_accepts_matching_valid_files(monkeypatch, t
         return type("Info", (), {"st_mode": stat.S_IFREG | mode, "st_uid": 0, "st_nlink": 1})()
     monkeypatch.setattr(helper.os, "stat", fake_stat)
     def fake_run(args, **kwargs):
-        if args[1:4] == ["x509", "-in", str(cert)]:
-            return helper.subprocess.CompletedProcess(args, 0, "OK", "")
-        if args[1:3] == ["x509", "-in"]:
-            return helper.subprocess.CompletedProcess(args, 0, "PUBLIC KEY", "")
-        if args[1:3] == ["pkey", "-in"]:
-            return helper.subprocess.CompletedProcess(args, 0, "PUBLIC KEY", "")
+        if args[1] == "x509" and "-pubkey" in args:
+            output = "PUBLIC KEY"
+        elif args[1] == "x509":
+            output = "OK"
+        elif args[1] == "pkey":
+            output = "PUBLIC KEY"
+        else:
+            raise AssertionError(args)
+        return helper.subprocess.CompletedProcess(args, 0, output, "")
         raise AssertionError(args)
     monkeypatch.setattr(helper.subprocess, "run", fake_run)
     result = helper._xray_validate_certificate("vpn.example.com")
