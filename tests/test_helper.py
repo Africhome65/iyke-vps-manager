@@ -276,7 +276,7 @@ def test_apt_task_runs_in_transient_system_service(monkeypatch):
     assert kwargs["timeout"] == 270
 
 
-def test_apt_task_reports_system_service_failure(monkeypatch):
+def test_apt_task_reports_system_service_failure(monkeypatch, capsys):
     def failed_run(command, **kwargs):
         raise helper.subprocess.CalledProcessError(
             100, command, output="", stderr="APT package operation failed"
@@ -287,11 +287,13 @@ def test_apt_task_reports_system_service_failure(monkeypatch):
     monkeypatch.setattr(helper.subprocess, "run", failed_run)
     with pytest.raises(SystemExit) as exc:
         helper._run_apt_task("/usr/bin/apt-get", ["install", "-y", "wireguard"], "install")
-    assert "APT package operation failed" in str(exc.value)
+    assert exc.value.code == 1
+    assert "APT package operation failed" in capsys.readouterr().err
 
 
-def test_apt_task_requires_systemd_run(monkeypatch):
+def test_apt_task_requires_systemd_run(monkeypatch, capsys):
     monkeypatch.setattr(helper.shutil, "which", lambda name: None)
     with pytest.raises(SystemExit) as exc:
         helper._run_apt_task("/usr/bin/apt-get", ["update"], "update")
-    assert "systemd-run is unavailable" in str(exc.value)
+    assert exc.value.code == 1
+    assert "systemd-run is unavailable" in capsys.readouterr().err
