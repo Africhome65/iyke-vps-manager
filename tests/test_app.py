@@ -192,3 +192,26 @@ def test_wireguard_create_peer_route_validates_name(client, monkeypatch):
     monkeypatch.setattr("app.subprocess.run", lambda *a, **k: pytest.fail("helper should not run"))
     response = client.post("/vpn/wireguard/peers", data={"name":"../bad","endpoint":"vpn.example.com:51820"})
     assert response.status_code == 302
+
+
+
+def test_xray_install_route_requires_login_and_calls_helper(client, monkeypatch):
+    response = client.post("/vpn/xray/install")
+    assert response.status_code == 302
+    login(client)
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(
+            args, 0,
+            stdout='{"installed":true,"service":"active","firewall_changed":false}',
+            stderr=""
+        )
+
+    monkeypatch.setattr("app.subprocess.run", fake_run)
+    response = client.post("/vpn/xray/install")
+    assert response.status_code == 302
+    request = __import__("json").loads(calls[0][1]["input"])
+    assert request == {"action": "xray_install"}
+    assert calls[0][1]["timeout"] == 660
