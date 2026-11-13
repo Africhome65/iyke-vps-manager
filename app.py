@@ -315,7 +315,7 @@ def create_app(test_config=None):
     @login_required
     def install_xray():
         try:
-            result = json.loads(run_helper("xray_install", timeout=330 or "{}")
+            result = json.loads(run_helper("xray_install", timeout=330) or "{}")
             audit("xray_installed", "Installed Xray-core using the pinned official installer")
             flash("Xray-core is installed. No VLESS/VMess listeners or firewall rules were configured.", "success")
             flash(f"Xray service state: {result.get('service', 'unknown')}", "success")
