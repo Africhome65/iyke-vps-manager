@@ -147,7 +147,7 @@ def test_wireguard_service_rejects_invalid_state(client, monkeypatch):
 def test_wireguard_profile_download_requires_login_and_is_not_cached(client, monkeypatch):
     assert client.get("/vpn/wireguard/peers/phone/profile").status_code == 302
     login(client)
-    monkeypatch.setattr("app.run_helper", lambda *a, **k: __import__("json").dumps({"profile":"[Interface]\nPrivateKey = secret\n"}))
+    monkeypatch.setattr("app.subprocess.run", lambda args, **kwargs: subprocess.CompletedProcess(args, 0, stdout=__import__("json").dumps({"profile":"[Interface]\nPrivateKey = secret\n"}), stderr=""))
     response = client.get("/vpn/wireguard/peers/phone/profile")
     assert response.status_code == 200
     assert response.headers["Cache-Control"] == "no-store, private, max-age=0"
@@ -155,7 +155,7 @@ def test_wireguard_profile_download_requires_login_and_is_not_cached(client, mon
 
 
 def test_wireguard_profile_revoke_requires_post_and_login(client, monkeypatch):
-    assert client.get("/vpn/wireguard/peers/phone/revoke").status_code == 302
+    assert client.get("/vpn/wireguard/peers/phone/revoke").status_code == 405
     login(client)
     assert client.post("/vpn/wireguard/peers/phone/revoke").status_code == 302
 
@@ -163,17 +163,21 @@ def test_wireguard_profile_revoke_requires_post_and_login(client, monkeypatch):
 def test_vpn_page_loads_peer_list_after_status(client, monkeypatch):
     login(client)
     calls = []
-    def fake_helper(action, **kwargs):
+    def fake_run(args, **kwargs):
+        payload = __import__("json").loads(kwargs["input"])
+        action = payload["action"]
         calls.append(action)
         if action == "vpn_status":
-            return __import__("json").dumps({
+            output = {
                 "wireguard":{"installed":True,"interfaces":[]},
                 "openvpn":{"installed":False,"instances":[]}
-            })
-        if action == "wireguard_peers":
-            return '[{"name":"phone01","address":"10.66.0.2/32","endpoint":"vpn.example.com:51820"}]'
-        raise AssertionError(action)
-    monkeypatch.setattr("app.run_helper", fake_helper)
+            }
+        elif action == "wireguard_peers":
+            output = [{"name":"phone01","address":"10.66.0.2/32","endpoint":"vpn.example.com:51820"}]
+        else:
+            raise AssertionError(action)
+        return subprocess.CompletedProcess(args, 0, stdout=__import__("json").dumps(output), stderr="")
+    monkeypatch.setattr("app.subprocess.run", fake_run)
     response = client.get("/vpn")
     assert response.status_code == 200
     assert b"phone01" in response.data
@@ -182,6 +186,6 @@ def test_vpn_page_loads_peer_list_after_status(client, monkeypatch):
 
 def test_wireguard_create_peer_route_validates_name(client, monkeypatch):
     login(client)
-    monkeypatch.setattr("app.run_helper", lambda *a, **k: pytest.fail("helper should not run"))
+    monkeypatch.setattr("app.subprocess.run", lambda *a, **k: pytest.fail("helper should not run"))
     response = client.post("/vpn/wireguard/peers", data={"name":"../bad","endpoint":"vpn.example.com:51820"})
     assert response.status_code == 302
