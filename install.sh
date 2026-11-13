@@ -55,7 +55,7 @@ IYKE_COOKIE_SECURE=0
 EOF
   chmod 0640 "$ETC_DIR/manager.env"
   chown root:"$SERVICE_USER" "$ETC_DIR/manager.env"
-  printf '%s\\n' "$BOOT_PASS" > /root/iyke-vps-manager-initial-password
+  printf '%s\n' "$BOOT_PASS" > /root/iyke-vps-manager-initial-password
   chmod 0600 /root/iyke-vps-manager-initial-password
 fi
 
