@@ -30,7 +30,13 @@ sudo bash install.sh
 
 The installer creates a dedicated `iyke-vps-manager` service account, installs the app under `/opt/iyke-vps-manager`, creates a random bootstrap administrator password, and prints it once at the end. Change it immediately after first login.
 
-Open `http://SERVER_IP:8787` for initial testing. Do not expose the panel directly to the public internet without HTTPS and firewall restrictions.
+The service listens only on `127.0.0.1:8787`. For a secure first test from your computer, create an SSH tunnel:
+
+```bash
+ssh -L 8787:127.0.0.1:8787 root@SERVER_IP
+```
+
+Then open `http://127.0.0.1:8787` in your browser. For ongoing remote access, configure an HTTPS reverse proxy and set `IYKE_COOKIE_SECURE=1` in `/etc/iyke-vps-manager/manager.env`, then restart the service. Do not expose the panel directly to the public internet.
 
 ## Configuration
 
@@ -58,7 +64,7 @@ export IYKE_BOOTSTRAP_PASSWORD="replace-with-a-long-random-password"
 python run.py
 ```
 
-The development server is not intended for production.
+The development server is not intended for production. Run automated checks with `pytest`.
 
 ## Roadmap
 
