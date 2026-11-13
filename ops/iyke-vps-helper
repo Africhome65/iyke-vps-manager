@@ -404,16 +404,22 @@ def _wireguard_peer_lock():
     directory = _secure_wireguard_dir()
     path = os.path.join(directory, "peers.lock")
     flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+    fd = None
     try:
         fd = os.open(path, flags, 0o600)
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_nlink != 1:
-            os.close(fd)
             fail("WireGuard peer lock file is unsafe")
         os.fchmod(fd, 0o600)
         with os.fdopen(fd, "r+") as lock_file:
+            fd = None
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
             yield
+    except OSError:
+        fail("Unable to lock WireGuard peer registry")
+    finally:
+        if fd is not None:
+            os.close(fd)
 
 
 def _peer_registry():
