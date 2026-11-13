@@ -46,6 +46,14 @@
     <div class="section-heading"><div><h2>Xray-core</h2><p class="muted">Engine for VLESS and VMess</p></div><span class="vpn-state {{ 'available' if vpn.xray.installed else 'missing' }}">{{ 'Installed' if vpn.xray.installed else 'Not installed' }}</span></div>
     {% if vpn.xray.installed %}
       <div class="vpn-instance"><b>System service</b><span class="vpn-state {{ 'available' if vpn.xray.service == 'active' else 'missing' }}">{{ vpn.xray.service|title }}</span></div>
+      <h3>Check domain and TLS readiness</h3>
+      <form method="post" action="{{ url_for('xray_preflight_route') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label for="xray-domain">Domain name pointing to this VPS</label>
+        <input id="xray-domain" name="domain" maxlength="253" required placeholder="vpn.example.com">
+        <button type="submit">Check readiness</button>
+      </form>
+      <p class="muted">This check does not change Nginx, Xray, certificates or firewall settings.</p>
     {% else %}
       <p class="muted">Install the official Xray-core engine. This does not create VLESS/VMess listeners, obtain certificates, change DNS or alter firewall rules.</p>
       <form method="post" action="{{ url_for('install_xray') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit">Install Xray-core</button></form>
