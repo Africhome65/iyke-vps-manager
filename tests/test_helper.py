@@ -1146,7 +1146,7 @@ def test_openvpn_create_client_revokes_certificate_after_post_issue_validation_f
     monkeypatch.setattr(helper, "_openvpn_run_easyrsa", fake_easyrsa)
     with pytest.raises(SystemExit):
         helper.openvpn_create_client("phone01")
-    assert stat.S_IMODE((pki / "private" / "phone01.key").stat().st_mode) == 0o600
+    assert not (pki / "private" / "phone01.key").exists()
     assert helper._openvpn_index_clients(index_state["value"])[0]["status"] == "revoked"
     assert easyrsa_calls == [["revoke", "phone01"], ["gen-crl"]]
 
@@ -1186,6 +1186,7 @@ def test_openvpn_create_client_rejects_failed_easyrsa(monkeypatch, capsys):
     monkeypatch.setattr(helper, "_openvpn_unique_pki", lambda require_ca_key=False: ("/safe/pki", ""))
     monkeypatch.setattr(helper, "_openvpn_pki_lock", lambda pki: __import__("contextlib").nullcontext())
     monkeypatch.setattr(helper, "_openvpn_easyrsa_path", lambda: "/usr/share/easy-rsa/easyrsa")
+    monkeypatch.setattr(helper, "_read_openvpn_index", lambda path: "")
     monkeypatch.setattr(helper.subprocess, "run", lambda args, **kwargs:
         helper.subprocess.CompletedProcess(args, 1, "", "sensitive output"))
     with pytest.raises(SystemExit):
