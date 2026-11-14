@@ -17,6 +17,8 @@ from flask_limiter.util import get_remote_address
 from flask_wtf.csrf import CSRFProtect
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from xray_profiles import build_vless_uri, build_vmess_uri
+
 USERNAME_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,30}\$?$")
 HELPER = "/usr/local/sbin/iyke-vps-helper"
 
@@ -355,6 +357,49 @@ def create_app(test_config=None):
         except (RuntimeError, json.JSONDecodeError) as exc:
             flash(str(exc), "error")
         return redirect(url_for("vpn_services"))
+
+    def xray_profile_uri(name):
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name) or name in {"root", "server", "ca"}:
+            abort(404)
+        try:
+            data = json.loads(run_helper("xray_get_profile", name=name) or "{}")
+            if (data.get("name") != name or data.get("protocol") not in {"vmess", "vless"}
+                    or not isinstance(data.get("id"), str)
+                    or not isinstance(data.get("hostname"), str)
+                    or not isinstance(data.get("path"), str) or data.get("port") != 443):
+                raise RuntimeError("Xray profile data could not be verified")
+            builder = build_vmess_uri if data["protocol"] == "vmess" else build_vless_uri
+            return builder(data["id"], data["hostname"], data["path"], name, port=data["port"]), data["protocol"]
+        except (RuntimeError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+            abort(404, description="Xray client profile is unavailable")
+
+    @app.get("/vpn/xray/clients/<name>/profile")
+    @login_required
+    def download_xray_profile(name):
+        profile, protocol = xray_profile_uri(name)
+        response = Response(profile + "\\n", mimetype="text/plain; charset=utf-8")
+        response.headers["Content-Disposition"] = f'attachment; filename="{name}-{protocol}.txt"'
+        response.headers["Cache-Control"] = "no-store, private, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        return response
+
+    @app.get("/vpn/xray/clients/<name>/qr")
+    @login_required
+    def xray_profile_qr(name):
+        try:
+            import io
+            import qrcode
+            from qrcode.image.svg import SvgPathImage
+            profile, _ = xray_profile_uri(name)
+            image = qrcode.make(profile, image_factory=SvgPathImage, border=4)
+            output = io.BytesIO()
+            image.save(output)
+            response = Response(output.getvalue(), mimetype="image/svg+xml")
+            response.headers["Cache-Control"] = "no-store, private, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            return response
+        except (ImportError, RuntimeError):
+            abort(404, description="Xray client QR code is unavailable")
 
     @app.post("/vpn/xray/clients/<name>/revoke")
     @login_required
