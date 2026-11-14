@@ -528,20 +528,27 @@ def _openvpn_cleanup_failed_issuance(pki, name, easyrsa):
                 or not _openvpn_remove_issued_artifact(cert_path)):
             fail("Unindexed failed issuance artifacts could not be removed; manual recovery is required")
         return
-    if record["status"] == "valid":
-        try:
+    try:
+        if record["status"] == "valid":
             _openvpn_run_easyrsa(easyrsa, pki, ["revoke", name])
             revoked_index = _read_openvpn_index(index_path)
             revoked = next((row for row in _openvpn_index_clients(revoked_index or "")
                             if row["common_name"] == name), None)
             if revoked is None or revoked["status"] != "revoked":
                 fail("Failed issuance certificate could not be confirmed revoked")
+        elif record["status"] != "revoked":
+            fail("Failed issuance certificate has an unexpected CA index status")
+        # Easy-RSA can update index.txt and then fail while generating the CRL.
+        # A pre-existing revoked index entry is therefore not proof that the
+        # active CRL contains this serial.
+        crl_path = os.path.join(pki, "crl.pem")
+        if not _openvpn_crl_contains_serial(crl_path, record["serial"]):
             _openvpn_run_easyrsa(easyrsa, pki, ["gen-crl"])
-            if not _openvpn_crl_contains_serial(os.path.join(pki, "crl.pem"), record["serial"]):
+            if not _openvpn_crl_contains_serial(crl_path, record["serial"]):
                 fail("Failed issuance CRL does not contain the revoked certificate serial")
-        except BaseException:
-            _openvpn_remove_issued_artifact(key_path)
-            fail("Failed issuance revocation or CRL verification failed; private key removed, manual CA recovery is required")
+    except BaseException:
+        _openvpn_remove_issued_artifact(key_path)
+        fail("Failed issuance revocation or CRL verification failed; private key removed, manual CA recovery is required")
     # A failed issuance must never leave a locally usable client identity.
     if not _openvpn_remove_issued_artifact(key_path):
         fail("Failed issuance private key could not be removed; manual recovery is required")
