@@ -1249,7 +1249,8 @@ def test_openvpn_get_profile_builds_inline_profile_only_for_verified_server(monk
     monkeypatch.setattr(helper, "_openvpn_runtime_config_matches", lambda unit, path: True)
     monkeypatch.setattr(helper, "_openvpn_certificate_is_client", lambda path: True)
     monkeypatch.setattr(helper, "_openvpn_config_directives", lambda path: {
-        "port": [["1194"]], "proto": [["udp"]], "dev": [["tun"]], "ca": [["ca.crt"]],
+        "port": [["1194"]], "proto": [["udp"]], "dev": [["tun"]],
+        "ca": [["/etc/openvpn/easy-rsa/pki/ca.crt"]],
         "tls-auth": [["ta.key"]],
     })
     def read_pem(path, label, max_bytes=1024 * 1024):
@@ -1331,7 +1332,12 @@ def test_openvpn_revoke_client_regenerates_verified_crl(tmp_path, monkeypatch):
         "crl_configured": True, "crl_file_present": True
     })
     monkeypatch.setattr(helper, "_openvpn_crl_contains_serial", lambda path, serial: serial == "01")
-    monkeypatch.setattr(helper, "_openvpn_config_directives", lambda path: {"cert": [["server.crt"]]})
+    ca_file = pki / "ca.crt"
+    ca_file.write_text("CA CERTIFICATE", encoding="ascii")
+    ca_file.chmod(0o600)
+    monkeypatch.setattr(helper, "_openvpn_config_directives", lambda path: {
+        "ca": [[str(ca_file)]], "cert": [["server.crt"]]
+    })
     monkeypatch.setattr(helper, "_openvpn_read_pem", lambda path, label: "-----BEGIN X509 CRL-----\nCRL\n-----END X509 CRL-----\n")
     monkeypatch.setattr(helper, "_openvpn_easyrsa_path", lambda: "/usr/bin/easyrsa")
     calls = []
