@@ -2147,6 +2147,94 @@ def hysteria_configure_single_port(domain, port, cert_path, key_path):
     }
 
 
+
+def hysteria_start_service():
+    """Start and enable only the dedicated manager-owned Hysteria unit."""
+    if os.geteuid() != 0:
+        fail("Starting Hysteria requires the privileged helper")
+    systemctl = shutil.which("systemctl")
+    systemd_analyze = shutil.which("systemd-analyze")
+    if not systemctl or not systemd_analyze:
+        fail("systemd verification tools are unavailable")
+    try:
+        config_info = os.lstat(HYSTERIA_CONFIG_PATH)
+        unit_info = os.lstat(HYSTERIA_UNIT_PATH)
+        group = grp.getgrnam("hysteria")
+    except (OSError, KeyError):
+        fail("The dedicated Hysteria configuration is missing or unsafe")
+    if (not stat.S_ISREG(config_info.st_mode) or config_info.st_uid != 0
+            or stat.S_IMODE(config_info.st_mode) & 0o027
+            or config_info.st_gid != group.gr_gid
+            or not stat.S_ISREG(unit_info.st_mode) or unit_info.st_uid != 0
+            or stat.S_IMODE(unit_info.st_mode) & 0o022):
+        fail("The dedicated Hysteria files have unsafe ownership or permissions")
+    try:
+        with open(HYSTERIA_CONFIG_PATH, "r", encoding="utf-8") as source:
+            config = json.load(source)
+    except (OSError, ValueError):
+        fail("The dedicated Hysteria configuration cannot be safely parsed")
+    if (not isinstance(config, dict) or not isinstance(config.get("listen"), str)
+            or not re.fullmatch(r":[1-9][0-9]{0,4}", config["listen"])
+            or int(config["listen"][1:]) > 65535
+            or not isinstance(config.get("auth"), dict)
+            or config["auth"].get("type") != "password"
+            or not isinstance(config["auth"].get("password"), str)
+            or len(config["auth"]["password"]) < 32
+            or not isinstance(config.get("tls"), dict)
+            or not isinstance(config["tls"].get("cert"), str)
+            or not isinstance(config["tls"].get("key"), str)):
+        fail("The dedicated Hysteria configuration is incomplete or invalid")
+    try:
+        with open(HYSTERIA_UNIT_PATH, "r", encoding="utf-8") as source:
+            unit = source.read(16384)
+    except OSError:
+        fail("The dedicated Hysteria service unit cannot be read")
+    if ("Description=Iyke VPS Manager Hysteria 2 server" not in unit
+            or "User=hysteria" not in unit or "Group=hysteria" not in unit
+            or "ExecStart=" not in unit
+            or HYSTERIA_CONFIG_PATH not in unit):
+        fail("The service unit is not the expected manager-owned Hysteria unit")
+    verify = subprocess.run(
+        [systemd_analyze, "verify", HYSTERIA_UNIT_PATH], text=True,
+        capture_output=True, check=False, timeout=30,
+    )
+    if verify.returncode != 0:
+        fail("systemd rejected the dedicated Hysteria service unit")
+    active = subprocess.run([systemctl, "is-active", "iyke-hysteria.service"],
+                            text=True, capture_output=True, check=False, timeout=15)
+    if active.returncode == 0:
+        fail("The dedicated Hysteria service is already active")
+    enabled = subprocess.run([systemctl, "is-enabled", "iyke-hysteria.service"],
+                             text=True, capture_output=True, check=False, timeout=15)
+    if enabled.returncode == 0:
+        fail("The dedicated Hysteria service is already enabled")
+    started = subprocess.run([systemctl, "start", "iyke-hysteria.service"],
+                             text=True, capture_output=True, check=False, timeout=60)
+    if started.returncode != 0:
+        subprocess.run([systemctl, "stop", "iyke-hysteria.service"],
+                       text=True, capture_output=True, check=False, timeout=30)
+        fail("Hysteria failed to start; only the dedicated Hysteria unit was stopped")
+    active_check = subprocess.run([systemctl, "is-active", "iyke-hysteria.service"],
+                                  text=True, capture_output=True, check=False, timeout=15)
+    if active_check.returncode != 0 or active_check.stdout.strip() != "active":
+        subprocess.run([systemctl, "stop", "iyke-hysteria.service"],
+                       text=True, capture_output=True, check=False, timeout=30)
+        fail("Hysteria did not remain active; the dedicated unit was stopped")
+    enabled_result = subprocess.run([systemctl, "enable", "iyke-hysteria.service"],
+                                    text=True, capture_output=True, check=False, timeout=30)
+    if enabled_result.returncode != 0:
+        subprocess.run([systemctl, "disable", "iyke-hysteria.service"],
+                       text=True, capture_output=True, check=False, timeout=30)
+        subprocess.run([systemctl, "stop", "iyke-hysteria.service"],
+                       text=True, capture_output=True, check=False, timeout=30)
+        fail("Hysteria started but could not be enabled; the dedicated unit was stopped and disabled")
+    return {
+        "started": True, "enabled": True, "service_state": "active",
+        "service_unit": "iyke-hysteria.service", "firewall_changed": False,
+        "udp_port": int(config["listen"][1:]),
+    }
+
+
 def hysteria_validate(domain, ports):
     """Validate a Hysteria endpoint request without changing the host."""
     if not isinstance(domain, str):
@@ -2828,6 +2916,11 @@ def handle_hysteria_action(request):
         print(json.dumps(hysteria_single_port_preview(
             request["domain"], request["port"], request["cert_path"], request["key_path"]
         )))
+        return True
+    if action == "hysteria_start_service":
+        if set(request) != {"action"}:
+            fail("Unexpected request fields")
+        print(json.dumps(hysteria_start_service()))
         return True
     if action == "hysteria_single_port_configure":
         if set(request) != {"action", "domain", "port", "cert_path", "key_path"}:
