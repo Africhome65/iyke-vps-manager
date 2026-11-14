@@ -2083,6 +2083,11 @@ def hysteria_configure_single_port(domain, port, cert_path, key_path):
     }
     # JSON is a strict YAML 1.2 subset; JSON encoding prevents YAML injection.
     config_text = json.dumps(config, ensure_ascii=True, indent=2) + "\n"
+    bind_capability = (
+        "AmbientCapabilities=CAP_NET_BIND_SERVICE\n"
+        "CapabilityBoundingSet=CAP_NET_BIND_SERVICE\n"
+        if preview["udp_port"] < 1024 else ""
+    )
     unit_text = (
         "[Unit]\n"
         "Description=Iyke VPS Manager Hysteria 2 server\n"
@@ -2092,6 +2097,7 @@ def hysteria_configure_single_port(domain, port, cert_path, key_path):
         "Type=simple\n"
         "User=hysteria\n"
         "Group=hysteria\n"
+        f"{bind_capability}"
         f"ExecStart={binary} server --config {HYSTERIA_CONFIG_PATH}\n"
         "Restart=on-failure\n"
         "RestartSec=5s\n"
@@ -2257,10 +2263,10 @@ def hysteria_start_service():
             or "ExecStart=" not in unit
             or HYSTERIA_CONFIG_PATH not in unit):
         fail("The service unit is not the expected manager-owned Hysteria unit")
-    if tls_mode == "acme-http01" and (
+    if (tls_mode == "acme-http01" or int(config["listen"][1:]) < 1024) and (
             "AmbientCapabilities=CAP_NET_BIND_SERVICE" not in unit
             or "CapabilityBoundingSet=CAP_NET_BIND_SERVICE" not in unit):
-        fail("The HTTP-01 service unit lacks the narrowly scoped port-80 bind capability")
+        fail("The service unit lacks the narrowly scoped low-port bind capability")
     verify = subprocess.run(
         [systemd_analyze, "verify", HYSTERIA_UNIT_PATH], text=True,
         capture_output=True, check=False, timeout=30,
