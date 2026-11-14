@@ -46,6 +46,20 @@
     <div class="section-heading"><div><h2>Xray-core</h2><p class="muted">Engine for VLESS and VMess</p></div><span class="vpn-state {{ 'available' if vpn.xray.installed else 'missing' }}">{{ 'Installed' if vpn.xray.installed else 'Not installed' }}</span></div>
     {% if vpn.xray.installed %}
       <div class="vpn-instance"><b>System service</b><span class="vpn-state {{ 'available' if vpn.xray.service == 'active' else 'missing' }}">{{ vpn.xray.service|title }}</span></div>
+      <div class="vpn-instance"><b>Configuration inspection</b><span class="vpn-state {{ 'available' if vpn.xray.config_status == 'readable' else 'missing' }}">{{ vpn.xray.config_status|title }}</span></div>
+      {% if vpn.xray.inbounds %}
+        <h3>Detected Xray inbounds</h3>
+        <div class="vpn-list">{% for inbound in vpn.xray.inbounds %}
+          <div class="vpn-instance">
+            <div><b>{{ inbound.protocol|upper }} · {{ inbound.network|upper }}</b><small class="muted">{{ inbound.listen }}:{{ inbound.port }}{% if inbound.path %} · {{ inbound.path }}{% endif %}</small></div>
+            <span class="vpn-state">{{ inbound.security|upper }}</span>
+          </div>
+        {% endfor %}</div>
+      {% elif vpn.xray.config_status == 'readable' %}
+        <p class="empty">The Xray configuration is readable, but it contains no inbound listeners.</p>
+      {% else %}
+        <p class="muted">The manager could not safely inspect the Xray configuration. No configuration changes were made.</p>
+      {% endif %}
       <hr>
       <h3>Create a client</h3>
       <form method="post" action="{{ url_for('create_xray_client') }}">
@@ -71,7 +85,7 @@
           </div>
         {% endfor %}</div>
       {% else %}<p class="empty">No Xray clients have been created yet.</p>{% endif %}
-      <p class="muted">These are protected client identity records only. Public listeners, TLS/REALITY, port 80/443 routing and downloadable connection profiles are not enabled yet. Do not use these records to connect until that setup is completed.</p>
+      <p class="muted">Client identities are currently stored in the manager registry. They are not yet synchronized with the detected Xray inbounds, and downloadable connection profiles are not yet available.</p>
     {% else %}
       <p class="muted">Install the official Xray-core engine. This does not create VLESS/VMess listeners, obtain certificates, change DNS or alter firewall rules.</p>
       <form method="post" action="{{ url_for('install_xray') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit">Install Xray-core</button></form>
