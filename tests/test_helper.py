@@ -702,6 +702,20 @@ def test_openvpn_crl_state_rejects_symlink_config(tmp_path):
     }
 
 
+def test_openvpn_pki_lock_does_not_relabel_operation_oserror(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(helper, "_safe_root_directory", lambda path: True)
+    monkeypatch.setattr(helper.os, "fstat", lambda fd: SimpleNamespace(
+        st_mode=stat.S_IFREG | 0o600, st_uid=0, st_nlink=1
+    ))
+    monkeypatch.setattr(helper.fcntl, "flock", lambda *args: None)
+
+    with pytest.raises(OSError, match="operation failed"):
+        with helper._openvpn_pki_lock(str(tmp_path)):
+            raise OSError("operation failed")
+
+
 def test_openvpn_create_client_uses_trusted_easyrsa_and_never_returns_key(tmp_path, monkeypatch):
     pki = tmp_path / "pki"
     for name in ("issued", "private"):
