@@ -2,16 +2,21 @@
 """Strict JSON privileged helper. Installed root-owned; invoked through one fixed sudo command."""
 import datetime
 import fcntl
+import grp
 import json
 import ipaddress
 import os
+import pwd
 import re
 import shutil
+import secrets
 import stat
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
+import urllib.parse
 import uuid
 from contextlib import contextmanager
 
@@ -1374,10 +1379,30 @@ def vpn_status():
         xray.update(_xray_config_summary())
         xray["public_hostname"] = _caddy_public_hostname()
     hysteria_binary = shutil.which("hysteria")
+    custom_hysteria_config = os.path.isfile(HYSTERIA_CONFIG_PATH)
+    custom_hysteria_unit = os.path.isfile(HYSTERIA_UNIT_PATH)
+    hysteria_unit = "iyke-hysteria.service" if custom_hysteria_unit else "hysteria-server.service"
+    hysteria_tls_mode = "unknown"
+    if custom_hysteria_config:
+        try:
+            with open(HYSTERIA_CONFIG_PATH, "r", encoding="utf-8") as source:
+                hysteria_config = json.load(source)
+            hysteria_tls_mode = (
+                "acme-http01" if isinstance(hysteria_config.get("acme"), dict)
+                and hysteria_config["acme"].get("type") == "http" else
+                "manual" if isinstance(hysteria_config.get("tls"), dict) else "unknown"
+            )
+        except (OSError, ValueError, AttributeError):
+            pass
     hysteria = {
         "installed": hysteria_binary is not None,
-        "service": _unit_state("hysteria-server.service") if hysteria_binary else "not-installed",
-        "config_status": "present" if os.path.isfile("/etc/hysteria/config.yaml") else "missing",
+        "service": _unit_state(hysteria_unit) if hysteria_binary else "not-installed",
+        "service_unit": hysteria_unit if hysteria_binary else "",
+        "tls_mode": hysteria_tls_mode,
+        "config_status": (
+            "configured" if custom_hysteria_config else
+            "example" if os.path.isfile("/etc/hysteria/config.yaml") else "missing"
+        ),
     }
     return {"wireguard": wireguard, "openvpn": openvpn, "xray": xray,
             "hysteria": hysteria}
@@ -1981,6 +2006,903 @@ def hysteria_install():
     }
 
 
+
+HYSTERIA_CONFIG_PATH = "/etc/hysteria/iyke.yaml"
+HYSTERIA_UNIT_PATH = "/etc/systemd/system/iyke-hysteria.service"
+
+
+def _hysteria_atomic_write(path, content, mode, group_id=None):
+    directory = os.path.dirname(path)
+    fd = None
+    temporary = None
+    try:
+        fd, temporary = tempfile.mkstemp(prefix=".iyke-hysteria-", dir=directory)
+        os.fchmod(fd, mode)
+        os.fchown(fd, 0, group_id if group_id is not None else 0)
+        with os.fdopen(fd, "w", encoding="utf-8") as target:
+            fd = None
+            target.write(content)
+            target.flush()
+            os.fsync(target.fileno())
+        os.replace(temporary, path)
+        temporary = None
+        dir_fd = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except OSError:
+        fail("Unable to safely write the dedicated Hysteria configuration")
+    finally:
+        if fd is not None:
+            os.close(fd)
+        if temporary is not None:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+
+
+def hysteria_configure_single_port(domain, port, cert_path, key_path):
+    """Create a dedicated disabled Hysteria unit and config; never start/open firewall."""
+    if os.geteuid() != 0:
+        fail("Hysteria configuration requires the privileged helper")
+    preview = hysteria_single_port_preview(domain, str(port), cert_path, key_path)
+    if (not preview.get("dns_resolves") or not preview.get("ports_checked")
+            or not preview.get("port_available")):
+        fail("DNS must resolve and the selected UDP port must be verifiably free before applying")
+    binary = shutil.which("hysteria")
+    systemctl = shutil.which("systemctl")
+    if not binary or not os.path.isfile(binary) or not os.access(binary, os.X_OK):
+        fail("Install the official Hysteria 2 binary before configuring a server")
+    if not systemctl:
+        fail("systemctl is unavailable")
+    systemd_analyze = shutil.which("systemd-analyze")
+    if not systemd_analyze:
+        fail("systemd-analyze is unavailable; cannot verify the new service unit")
+    try:
+        group = grp.getgrnam("hysteria")
+    except KeyError:
+        fail("The Hysteria service group is unavailable")
+    for directory in ("/etc", "/etc/hysteria", "/etc/systemd", "/etc/systemd/system"):
+        try:
+            info = os.lstat(directory)
+        except OSError:
+            fail("A required system configuration directory is unavailable")
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0
+                or stat.S_IMODE(info.st_mode) & 0o022):
+            fail("A required system configuration directory has unsafe ownership or permissions")
+    for path in (HYSTERIA_CONFIG_PATH, HYSTERIA_UNIT_PATH):
+        if os.path.lexists(path):
+            fail("A dedicated Hysteria configuration already exists; refusing to overwrite it")
+
+    password = secrets.token_urlsafe(32)
+    config = {
+        "listen": ":" + str(preview["udp_port"]),
+        "tls": {"cert": preview["certificate_path"], "key": preview["private_key_path"]},
+        "auth": {"type": "password", "password": password},
+    }
+    # JSON is a strict YAML 1.2 subset; JSON encoding prevents YAML injection.
+    config_text = json.dumps(config, ensure_ascii=True, indent=2) + "\n"
+    bind_capability = (
+        "AmbientCapabilities=CAP_NET_BIND_SERVICE\n"
+        "CapabilityBoundingSet=CAP_NET_BIND_SERVICE\n"
+        if preview["udp_port"] < 1024 else ""
+    )
+    unit_text = (
+        "[Unit]\n"
+        "Description=Iyke VPS Manager Hysteria 2 server\n"
+        "After=network-online.target\n"
+        "Wants=network-online.target\n\n"
+        "[Service]\n"
+        "Type=simple\n"
+        "User=hysteria\n"
+        "Group=hysteria\n"
+        f"{bind_capability}"
+        f"ExecStart={binary} server --config {HYSTERIA_CONFIG_PATH}\n"
+        "Restart=on-failure\n"
+        "RestartSec=5s\n"
+        "NoNewPrivileges=true\n"
+        "PrivateTmp=true\n"
+        "ProtectSystem=full\n"
+        "ProtectHome=read-only\n"
+        "UMask=0027\n\n"
+        "[Install]\n"
+        "WantedBy=multi-user.target\n"
+    )
+    config_written = False
+    unit_written = False
+    try:
+        _hysteria_atomic_write(HYSTERIA_CONFIG_PATH, config_text, 0o640, group.gr_gid)
+        config_written = True
+        _hysteria_atomic_write(HYSTERIA_UNIT_PATH, unit_text, 0o644, 0)
+        unit_written = True
+        verify_result = subprocess.run(
+            [systemd_analyze, "verify", HYSTERIA_UNIT_PATH], text=True,
+            capture_output=True, check=False, timeout=30,
+        )
+        if verify_result.returncode != 0:
+            raise RuntimeError("systemd rejected the dedicated Hysteria service unit")
+        reload_result = subprocess.run(
+            [systemctl, "daemon-reload"], text=True, capture_output=True,
+            check=False, timeout=30,
+        )
+        if reload_result.returncode != 0:
+            raise RuntimeError("systemd could not reload the dedicated Hysteria unit")
+    except (RuntimeError, SystemExit, OSError, subprocess.TimeoutExpired):
+        if unit_written:
+            try:
+                os.unlink(HYSTERIA_UNIT_PATH)
+            except OSError:
+                pass
+        if config_written:
+            try:
+                os.unlink(HYSTERIA_CONFIG_PATH)
+            except OSError:
+                pass
+        try:
+            subprocess.run([systemctl, "daemon-reload"], text=True,
+                           capture_output=True, check=False, timeout=30)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        fail("Hysteria configuration could not be applied; created files were rolled back")
+
+    uri = (
+        "hysteria2://" + urllib.parse.quote(password, safe="")
+        + "@" + preview["domain"] + ":" + str(preview["udp_port"])
+        + "/?sni=" + urllib.parse.quote(preview["domain"], safe="")
+        + "#Iyke-VPS-Manager"
+    )
+    return {
+        "configured": True,
+        "tls_mode": "manual",
+        "domain": preview["domain"],
+        "udp_port": preview["udp_port"],
+        "config_path": HYSTERIA_CONFIG_PATH,
+        "service_unit": "iyke-hysteria.service",
+        "service_state": "not-started",
+        "service_enabled": False,
+        "firewall_changed": False,
+        "password": password,
+        "client_uri": uri,
+        "warning": "Save the password and client URI now; they are shown only in this response.",
+    }
+
+
+
+
+
+def _hysteria_udp_listener_present(port):
+    ss = shutil.which("ss")
+    if not ss:
+        fail("UDP listener inspection is unavailable; service readiness cannot be verified")
+    try:
+        result = subprocess.run([ss, "-H", "-lunp"], text=True, capture_output=True,
+                                check=False, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        fail("UDP listener inspection failed; service readiness cannot be verified")
+    if result.returncode != 0:
+        fail("UDP listener inspection failed; service readiness cannot be verified")
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) < 4:
+            fail("UDP listener output could not be safely interpreted")
+        try:
+            local_port = int(fields[3].rsplit(":", 1)[1])
+        except (ValueError, IndexError):
+            fail("UDP listener output could not be safely interpreted")
+        if local_port == port and re.search(r'users:\(\("hysteria",pid=\d+', line):
+            return True
+    return False
+
+
+def _hysteria_ufw_tcp80_allowed():
+    ufw = shutil.which("ufw")
+    if not ufw:
+        return False
+    result = subprocess.run([ufw, "status"], text=True, capture_output=True,
+                            check=False, timeout=20)
+    if result.returncode != 0 or not re.search(
+            r"^Status:\s+active\s*$", result.stdout, re.I | re.M):
+        return False
+    allowed = False
+    denied = False
+    for line in result.stdout.splitlines():
+        match = re.match(
+            r"^\s*80(?:/(tcp|udp))?\s+(ALLOW|DENY|REJECT)\s+IN\b",
+            line, re.I,
+        )
+        if match and (match.group(1) or "any").lower() in {"tcp", "any"}:
+            if match.group(2).upper() == "ALLOW":
+                allowed = True
+            else:
+                denied = True
+    return allowed and not denied
+
+
+def hysteria_start_service():
+    """Start and enable only the dedicated manager-owned Hysteria unit."""
+    if os.geteuid() != 0:
+        fail("Starting Hysteria requires the privileged helper")
+    systemctl = shutil.which("systemctl")
+    systemd_analyze = shutil.which("systemd-analyze")
+    if not systemctl or not systemd_analyze:
+        fail("systemd verification tools are unavailable")
+    try:
+        config_info = os.lstat(HYSTERIA_CONFIG_PATH)
+        unit_info = os.lstat(HYSTERIA_UNIT_PATH)
+        group = grp.getgrnam("hysteria")
+    except (OSError, KeyError):
+        fail("The dedicated Hysteria configuration is missing or unsafe")
+    if (not stat.S_ISREG(config_info.st_mode) or config_info.st_uid != 0
+            or stat.S_IMODE(config_info.st_mode) & 0o027
+            or config_info.st_gid != group.gr_gid
+            or not stat.S_ISREG(unit_info.st_mode) or unit_info.st_uid != 0
+            or stat.S_IMODE(unit_info.st_mode) & 0o022):
+        fail("The dedicated Hysteria files have unsafe ownership or permissions")
+    try:
+        with open(HYSTERIA_CONFIG_PATH, "r", encoding="utf-8") as source:
+            config = json.load(source)
+    except (OSError, ValueError):
+        fail("The dedicated Hysteria configuration cannot be safely parsed")
+    if (not isinstance(config, dict) or not isinstance(config.get("listen"), str)
+            or not re.fullmatch(r":[1-9][0-9]{0,4}", config["listen"])
+            or int(config["listen"][1:]) > 65535
+            or not isinstance(config.get("auth"), dict)
+            or config["auth"].get("type") != "password"
+            or not isinstance(config["auth"].get("password"), str)
+            or len(config["auth"]["password"]) < 32):
+        fail("The dedicated Hysteria configuration is incomplete or invalid")
+    manual_tls = config.get("tls")
+    acme = config.get("acme")
+    if isinstance(manual_tls, dict) and set(manual_tls) >= {"cert", "key"}:
+        tls_mode = "manual"
+    elif (isinstance(acme, dict) and acme.get("type") == "http"
+          and acme.get("dir") == HYSTERIA_ACME_DIR
+          and isinstance(acme.get("domains"), list) and len(acme["domains"]) == 1
+          and isinstance(acme["domains"][0], str)
+          and isinstance(acme.get("email"), str)):
+        tls_mode = "acme-http01"
+        if not _hysteria_tcp_listener_check(80):
+            fail("TCP port 80 is occupied; refusing to start the HTTP-01 challenge listener")
+        if not _hysteria_ufw_tcp80_allowed():
+            fail("Allow TCP port 80 through UFW before starting HTTP-01 certificate issuance")
+        try:
+            acme_info = os.lstat(HYSTERIA_ACME_DIR)
+            account = pwd.getpwnam("hysteria")
+            group = grp.getgrnam("hysteria")
+        except (OSError, KeyError):
+            fail("The protected Hysteria ACME storage directory is unavailable")
+        if (not stat.S_ISDIR(acme_info.st_mode) or acme_info.st_uid != account.pw_uid
+                or acme_info.st_gid != group.gr_gid
+                or stat.S_IMODE(acme_info.st_mode) & 0o077):
+            fail("The Hysteria ACME storage directory has unsafe ownership or permissions")
+    else:
+        fail("The dedicated Hysteria configuration must contain either valid manual TLS or HTTP-01 ACME settings")
+    try:
+        with open(HYSTERIA_UNIT_PATH, "r", encoding="utf-8") as source:
+            unit = source.read(16384)
+    except OSError:
+        fail("The dedicated Hysteria service unit cannot be read")
+    if ("Description=Iyke VPS Manager Hysteria 2 server" not in unit
+            or "User=hysteria" not in unit or "Group=hysteria" not in unit
+            or "ExecStart=" not in unit
+            or HYSTERIA_CONFIG_PATH not in unit):
+        fail("The service unit is not the expected manager-owned Hysteria unit")
+    if (tls_mode == "acme-http01" or int(config["listen"][1:]) < 1024) and (
+            "AmbientCapabilities=CAP_NET_BIND_SERVICE" not in unit
+            or "CapabilityBoundingSet=CAP_NET_BIND_SERVICE" not in unit):
+        fail("The service unit lacks the narrowly scoped low-port bind capability")
+    verify = subprocess.run(
+        [systemd_analyze, "verify", HYSTERIA_UNIT_PATH], text=True,
+        capture_output=True, check=False, timeout=30,
+    )
+    if verify.returncode != 0:
+        fail("systemd rejected the dedicated Hysteria service unit")
+    active = subprocess.run([systemctl, "is-active", "iyke-hysteria.service"],
+                            text=True, capture_output=True, check=False, timeout=15)
+    if active.returncode == 0:
+        fail("The dedicated Hysteria service is already active")
+    enabled = subprocess.run([systemctl, "is-enabled", "iyke-hysteria.service"],
+                             text=True, capture_output=True, check=False, timeout=15)
+    if enabled.returncode == 0:
+        fail("The dedicated Hysteria service is already enabled")
+    started = subprocess.run([systemctl, "start", "iyke-hysteria.service"],
+                             text=True, capture_output=True, check=False, timeout=180)
+    if started.returncode != 0:
+        subprocess.run([systemctl, "stop", "iyke-hysteria.service"],
+                       text=True, capture_output=True, check=False, timeout=30)
+        fail("Hysteria failed to start; only the dedicated Hysteria unit was stopped")
+    ready_deadline = time.monotonic() + (180 if tls_mode == "acme-http01" else 30)
+    listener_ready = False
+    while time.monotonic() < ready_deadline:
+        active_check = subprocess.run(
+            [systemctl, "is-active", "iyke-hysteria.service"],
+            text=True, capture_output=True, check=False, timeout=15,
+        )
+        if active_check.returncode != 0 or active_check.stdout.strip() != "active":
+            subprocess.run([systemctl, "stop", "iyke-hysteria.service"],
+                           text=True, capture_output=True, check=False, timeout=30)
+            fail("Hysteria exited before its UDP listener became ready; the dedicated unit was stopped")
+        if _hysteria_udp_listener_present(int(config["listen"][1:])):
+            listener_ready = True
+            break
+        time.sleep(1)
+    if not listener_ready:
+        subprocess.run([systemctl, "stop", "iyke-hysteria.service"],
+                       text=True, capture_output=True, check=False, timeout=30)
+        fail("Hysteria did not open its configured UDP listener in time; the dedicated unit was stopped")
+    enabled_result = subprocess.run([systemctl, "enable", "iyke-hysteria.service"],
+                                    text=True, capture_output=True, check=False, timeout=30)
+    enabled_check = subprocess.run([systemctl, "is-enabled", "iyke-hysteria.service"],
+                                   text=True, capture_output=True, check=False, timeout=15)
+    if (enabled_result.returncode != 0 or enabled_check.returncode != 0
+            or enabled_check.stdout.strip() != "enabled"):
+        subprocess.run([systemctl, "disable", "iyke-hysteria.service"],
+                       text=True, capture_output=True, check=False, timeout=30)
+        subprocess.run([systemctl, "stop", "iyke-hysteria.service"],
+                       text=True, capture_output=True, check=False, timeout=30)
+        fail("Hysteria started but could not be enabled and verified; the dedicated unit was stopped and disabled")
+    final_active = subprocess.run(
+        [systemctl, "is-active", "iyke-hysteria.service"],
+        text=True, capture_output=True, check=False, timeout=15,
+    )
+    if (final_active.returncode != 0 or final_active.stdout.strip() != "active"
+            or not _hysteria_udp_listener_present(int(config["listen"][1:]))):
+        subprocess.run([systemctl, "disable", "iyke-hysteria.service"],
+                       text=True, capture_output=True, check=False, timeout=30)
+        subprocess.run([systemctl, "stop", "iyke-hysteria.service"],
+                       text=True, capture_output=True, check=False, timeout=30)
+        fail("Hysteria did not remain ready after enablement; the dedicated unit was stopped and disabled")
+    return {
+        "started": True, "enabled": True, "service_state": "active",
+        "service_unit": "iyke-hysteria.service", "firewall_changed": False,
+        "udp_port": int(config["listen"][1:]), "tls_mode": tls_mode,
+    }
+
+
+
+def hysteria_firewall_open_udp():
+    """Explicitly allow only the configured Hysteria UDP port through active UFW."""
+    if os.geteuid() != 0:
+        fail("Changing the firewall requires the privileged helper")
+    systemctl = shutil.which("systemctl")
+    ufw = shutil.which("ufw")
+    if not systemctl or not ufw:
+        fail("This operation requires systemd and UFW; no firewall change was made")
+    active = subprocess.run([systemctl, "is-active", "iyke-hysteria.service"],
+                            text=True, capture_output=True, check=False, timeout=15)
+    if active.returncode != 0 or active.stdout.strip() != "active":
+        fail("Start and verify the dedicated Hysteria service before opening its UDP port")
+    try:
+        config_info = os.lstat(HYSTERIA_CONFIG_PATH)
+        group = grp.getgrnam("hysteria")
+        if (not stat.S_ISREG(config_info.st_mode) or config_info.st_uid != 0
+                or config_info.st_gid != group.gr_gid
+                or stat.S_IMODE(config_info.st_mode) & 0o027):
+            fail("The dedicated Hysteria configuration has unsafe ownership or permissions")
+        with open(HYSTERIA_CONFIG_PATH, "r", encoding="utf-8") as source:
+            config = json.load(source)
+    except (OSError, KeyError, ValueError):
+        fail("The dedicated Hysteria configuration is missing or unsafe")
+    listen = config.get("listen") if isinstance(config, dict) else None
+    if not isinstance(listen, str) or not re.fullmatch(r":[1-9][0-9]{0,4}", listen):
+        fail("The dedicated Hysteria UDP listener is invalid")
+    port = int(listen[1:])
+    if port > 65535:
+        fail("The dedicated Hysteria UDP port is invalid")
+    status = subprocess.run([ufw, "status"], text=True, capture_output=True,
+                            check=False, timeout=30)
+    if status.returncode != 0 or not re.search(r"^Status:\s+active\s*$", status.stdout, re.I | re.M):
+        fail("UFW is not verifiably active; no firewall change was made")
+    allow_found = False
+    deny_found = False
+    for line in status.stdout.splitlines():
+        match = re.match(
+            r"^\s*(\d+)(?::(\d+))?(?:/(tcp|udp))?\s+(ALLOW|DENY|REJECT)\s+IN\b",
+            line, re.I,
+        )
+        if not match:
+            continue
+        first = int(match.group(1))
+        last = int(match.group(2) or first)
+        protocol = (match.group(3) or "any").lower()
+        if first <= port <= last and protocol in {"any", "udp"}:
+            if match.group(4).upper() == "ALLOW":
+                allow_found = True
+            else:
+                deny_found = True
+    if deny_found:
+        fail("An existing UFW deny/reject rule overlaps this UDP port; resolve it manually")
+    if allow_found:
+        return {
+            "opened": True, "already_allowed": True, "firewall_changed": False,
+            "firewall": "ufw", "udp_port": port,
+        }
+    added = subprocess.run(
+        [ufw, "allow", f"{port}/udp", "comment", "Iyke VPS Manager Hysteria 2"],
+        text=True, capture_output=True, check=False, timeout=30,
+    )
+    if added.returncode != 0:
+        fail("UFW did not accept the Hysteria UDP rule; no other firewall was changed")
+    verified = subprocess.run([ufw, "status"], text=True, capture_output=True,
+                              check=False, timeout=30)
+    verified_allow = False
+    verified_deny = False
+    if verified.returncode == 0:
+        for line in verified.stdout.splitlines():
+            match = re.match(
+                r"^\s*(\d+)(?::(\d+))?(?:/(tcp|udp))?\s+(ALLOW|DENY|REJECT)\s+IN\b",
+                line, re.I,
+            )
+            if not match:
+                continue
+            first = int(match.group(1))
+            last = int(match.group(2) or first)
+            protocol = (match.group(3) or "any").lower()
+            if first <= port <= last and protocol in {"any", "udp"}:
+                if match.group(4).upper() == "ALLOW":
+                    verified_allow = True
+                else:
+                    verified_deny = True
+    if not verified_allow or verified_deny:
+        subprocess.run([ufw, "--force", "delete", "allow", f"{port}/udp"],
+                       text=True, capture_output=True, check=False, timeout=30)
+        fail("The new UFW rule could not be verified; its added rule was rolled back")
+    return {
+        "opened": True, "already_allowed": False, "firewall_changed": True,
+        "firewall": "ufw", "udp_port": port,
+    }
+
+
+
+HYSTERIA_ACME_PARENT = "/var/lib/iyke-hysteria"
+HYSTERIA_ACME_DIR = "/var/lib/iyke-hysteria/acme"
+
+
+def _hysteria_tcp_listener_check(port):
+    ss = shutil.which("ss")
+    if not ss:
+        fail("Socket inspection is unavailable; cannot safely check the HTTP-01 listener port")
+    try:
+        result = subprocess.run([ss, "-H", "-ltn"], text=True, capture_output=True,
+                                check=False, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        fail("TCP listener inspection failed; no changes were made")
+    if result.returncode != 0:
+        fail("TCP listener inspection failed; no changes were made")
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) < 4:
+            fail("TCP listener output could not be safely interpreted")
+        local_address = fields[3]
+        try:
+            local_port = int(local_address.rsplit(":", 1)[1])
+        except (ValueError, IndexError):
+            fail("TCP listener output could not be safely interpreted")
+        if local_port == port:
+            return False
+    return True
+
+
+def _hysteria_http01_preflight(domain, port):
+    endpoint = hysteria_validate(domain, str(port))
+    if len(endpoint["udp_ports"]) != 1:
+        fail("Configure exactly one Hysteria UDP port")
+    readiness = hysteria_readiness(endpoint["domain"], str(port))
+    if (not readiness.get("dns_resolves") or not readiness.get("ports_checked")
+            or not readiness.get("available_ports")):
+        fail("The domain must resolve and the selected Hysteria UDP port must be verifiably free")
+    if not _hysteria_tcp_listener_check(80):
+        fail("TCP port 80 is already in use; HTTP-01 cannot take over an existing web server")
+    getent = shutil.which("getent")
+    if not getent:
+        fail("DNS inspection is unavailable; HTTP-01 preflight cannot continue")
+    try:
+        ipv4_result = subprocess.run([getent, "ahostsv4", endpoint["domain"]],
+                                     text=True, capture_output=True, check=False, timeout=10)
+        ipv6_result = subprocess.run([getent, "ahostsv6", endpoint["domain"]],
+                                     text=True, capture_output=True, check=False, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        fail("DNS address verification failed; no changes were made")
+    if ipv4_result.returncode != 0 or ipv6_result.returncode == 0 and ipv6_result.stdout.strip():
+        fail("HTTP-01 currently requires one IPv4 destination; remove or correctly configure any AAAA record first")
+    dns_ipv4 = sorted({line.split()[0] for line in ipv4_result.stdout.splitlines() if line.split()})
+    if not dns_ipv4:
+        fail("The domain has no verifiable IPv4 address")
+    try:
+        request = urllib.request.Request(
+            "https://api.ipify.org", headers={"User-Agent": "Iyke-VPS-Manager/1.0"}
+        )
+        with urllib.request.urlopen(request, timeout=8) as response:
+            public_ip = str(ipaddress.IPv4Address(response.read(64).decode("ascii").strip()))
+    except (OSError, UnicodeDecodeError, ValueError):
+        fail("Unable to verify this VPS public IPv4 address; HTTP-01 setup is unavailable")
+    if dns_ipv4 != [public_ip]:
+        fail("The domain's IPv4 DNS records must point only to this VPS public IPv4 address")
+    ufw = shutil.which("ufw")
+    if not ufw:
+        fail("UFW is required for the first HTTP-01 release; other firewall managers are not yet supported")
+    status = subprocess.run([ufw, "status"], text=True, capture_output=True,
+                            check=False, timeout=20)
+    if status.returncode != 0 or not re.search(r"^Status:\s+active\s*$", status.stdout, re.I | re.M):
+        fail("UFW must be active so TCP port 80 can be checked and managed safely")
+    allow = False
+    deny = False
+    for line in status.stdout.splitlines():
+        match = re.match(r"^\s*(80)(?:/(tcp|udp))?\s+(ALLOW|DENY|REJECT)\s+IN\b", line, re.I)
+        if match and (match.group(2) or "any").lower() in {"tcp", "any"}:
+            if match.group(3).upper() == "ALLOW":
+                allow = True
+            else:
+                deny = True
+    if deny:
+        fail("An existing UFW deny/reject rule overlaps TCP port 80; resolve it manually")
+    return {
+        "valid": True, "domain": endpoint["domain"], "udp_port": port,
+        "dns_ipv4": dns_ipv4, "vps_public_ipv4": public_ip,
+        "tcp80_available": True, "ufw_active": True,
+        "tcp80_allowed": allow, "firewall_changed": False,
+        "service_changed": False, "configuration_written": False,
+    }
+
+
+def hysteria_http01_preview(domain, port):
+    return _hysteria_http01_preflight(domain, port)
+
+
+def hysteria_configure_http01(domain, port, email):
+    if os.geteuid() != 0:
+        fail("Hysteria ACME configuration requires the privileged helper")
+    if not isinstance(email, str) or len(email) > 254 or not re.fullmatch(
+            r"[A-Za-z0-9.!#$%&'*+/=?^_\x60{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+",
+            email.strip()):
+        fail("Enter a valid email address for certificate expiry and ACME notices")
+    email = email.strip()
+    preview = _hysteria_http01_preflight(domain, port)
+    binary = shutil.which("hysteria")
+    systemctl = shutil.which("systemctl")
+    systemd_analyze = shutil.which("systemd-analyze")
+    if not binary or not os.path.isfile(binary) or not os.access(binary, os.X_OK):
+        fail("Install the official Hysteria 2 binary before configuring ACME")
+    if not systemctl or not systemd_analyze:
+        fail("systemd verification tools are unavailable")
+    try:
+        group = grp.getgrnam("hysteria")
+        account = pwd.getpwnam("hysteria")
+    except (KeyError, NameError):
+        fail("The Hysteria service account or group is unavailable")
+    for directory in ("/etc", "/etc/hysteria", "/etc/systemd", "/etc/systemd/system", "/var", "/var/lib"):
+        try:
+            info = os.lstat(directory)
+        except OSError:
+            fail("A required system directory is unavailable")
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or stat.S_IMODE(info.st_mode) & 0o022:
+            fail("A required system directory has unsafe ownership or permissions")
+    for path in (HYSTERIA_CONFIG_PATH, HYSTERIA_UNIT_PATH, HYSTERIA_ACME_PARENT):
+        if os.path.lexists(path):
+            fail("A dedicated Hysteria configuration or ACME directory already exists; refusing to overwrite it")
+    password = secrets.token_urlsafe(32)
+    config = {
+        "listen": ":" + str(preview["udp_port"]),
+        "acme": {
+            "domains": [preview["domain"]], "email": email,
+            "type": "http", "dir": HYSTERIA_ACME_DIR,
+        },
+        "auth": {"type": "password", "password": password},
+    }
+    config_text = json.dumps(config, ensure_ascii=True, indent=2) + "\n"
+    unit_text = (
+        "[Unit]\nDescription=Iyke VPS Manager Hysteria 2 server\n"
+        "After=network-online.target\nWants=network-online.target\n\n"
+        "[Service]\nType=simple\nUser=hysteria\nGroup=hysteria\n"
+        "AmbientCapabilities=CAP_NET_BIND_SERVICE\n"
+        "CapabilityBoundingSet=CAP_NET_BIND_SERVICE\n"
+        f"ExecStart={binary} server --config {HYSTERIA_CONFIG_PATH}\n"
+        "Restart=on-failure\nRestartSec=5s\nNoNewPrivileges=true\n"
+        "PrivateTmp=true\nProtectSystem=full\nProtectHome=read-only\n"
+        "UMask=0027\n\n[Install]\nWantedBy=multi-user.target\n"
+    )
+    parent_created = False
+    acme_created = False
+    config_written = False
+    unit_written = False
+    try:
+        os.mkdir(HYSTERIA_ACME_PARENT, 0o750)
+        parent_created = True
+        os.chown(HYSTERIA_ACME_PARENT, 0, group.gr_gid)
+        os.chmod(HYSTERIA_ACME_PARENT, 0o750)
+        os.mkdir(HYSTERIA_ACME_DIR, 0o700)
+        acme_created = True
+        os.chown(HYSTERIA_ACME_DIR, account.pw_uid, group.gr_gid)
+        os.chmod(HYSTERIA_ACME_DIR, 0o700)
+        _hysteria_atomic_write(HYSTERIA_CONFIG_PATH, config_text, 0o640, group.gr_gid)
+        config_written = True
+        _hysteria_atomic_write(HYSTERIA_UNIT_PATH, unit_text, 0o644, 0)
+        unit_written = True
+        verify = subprocess.run([systemd_analyze, "verify", HYSTERIA_UNIT_PATH],
+                                text=True, capture_output=True, check=False, timeout=30)
+        if verify.returncode != 0:
+            raise RuntimeError("systemd rejected the dedicated Hysteria service unit")
+        reload_result = subprocess.run([systemctl, "daemon-reload"], text=True,
+                                       capture_output=True, check=False, timeout=30)
+        if reload_result.returncode != 0:
+            raise RuntimeError("systemd could not reload the dedicated Hysteria unit")
+    except (RuntimeError, OSError, subprocess.TimeoutExpired):
+        for path, created in ((HYSTERIA_UNIT_PATH, unit_written),
+                              (HYSTERIA_CONFIG_PATH, config_written)):
+            if created:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+        for path, created in ((HYSTERIA_ACME_DIR, acme_created),
+                              (HYSTERIA_ACME_PARENT, parent_created)):
+            if created:
+                try:
+                    os.rmdir(path)
+                except OSError:
+                    pass
+        try:
+            subprocess.run([systemctl, "daemon-reload"], text=True,
+                           capture_output=True, check=False, timeout=30)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        fail("Hysteria ACME configuration could not be applied; newly created files were rolled back")
+    uri = (
+        "hysteria2://" + urllib.parse.quote(password, safe="")
+        + "@" + preview["domain"] + ":" + str(preview["udp_port"])
+        + "/?sni=" + urllib.parse.quote(preview["domain"], safe="")
+        + "#Iyke-VPS-Manager"
+    )
+    return {
+        "configured": True, "tls_mode": "acme-http01",
+        "domain": preview["domain"], "udp_port": preview["udp_port"],
+        "config_path": HYSTERIA_CONFIG_PATH, "service_unit": "iyke-hysteria.service",
+        "service_state": "not-started", "service_enabled": False,
+        "firewall_changed": False, "password": password, "client_uri": uri,
+        "warning": "Save the password and client URI now. TCP port 80 must remain reachable for certificate renewals.",
+    }
+
+
+def hysteria_firewall_open_http01_tcp():
+    if os.geteuid() != 0:
+        fail("Changing the firewall requires the privileged helper")
+    if not _hysteria_tcp_listener_check(80):
+        fail("TCP port 80 is now occupied; refusing to start the HTTP-01 listener")
+    try:
+        with open(HYSTERIA_CONFIG_PATH, "r", encoding="utf-8") as source:
+            config = json.load(source)
+    except (OSError, ValueError):
+        fail("The dedicated Hysteria configuration is unavailable")
+    acme = config.get("acme") if isinstance(config, dict) else None
+    if not isinstance(acme, dict) or acme.get("type") != "http":
+        fail("The configured Hysteria instance does not use HTTP-01")
+    ufw = shutil.which("ufw")
+    if not ufw:
+        fail("UFW is unavailable; no firewall changes were made")
+    status = subprocess.run([ufw, "status"], text=True, capture_output=True,
+                            check=False, timeout=20)
+    if status.returncode != 0 or not re.search(r"^Status:\s+active\s*$", status.stdout, re.I | re.M):
+        fail("UFW is not verifiably active; no firewall changes were made")
+    allow = False
+    deny = False
+    for line in status.stdout.splitlines():
+        match = re.match(r"^\s*80(?:/(tcp|udp))?\s+(ALLOW|DENY|REJECT)\s+IN\b", line, re.I)
+        if match and (match.group(1) or "any").lower() in {"tcp", "any"}:
+            if match.group(2).upper() == "ALLOW":
+                allow = True
+            else:
+                deny = True
+    if deny:
+        fail("An existing UFW deny/reject rule overlaps TCP port 80; resolve it manually")
+    if allow:
+        return {"opened": True, "already_allowed": True, "firewall_changed": False,
+                "firewall": "ufw", "tcp_port": 80}
+    added = subprocess.run([ufw, "allow", "80/tcp", "comment", "Iyke VPS Manager Hysteria ACME HTTP-01"],
+                           text=True, capture_output=True, check=False, timeout=30)
+    if added.returncode != 0:
+        fail("UFW did not accept the TCP/80 rule; no other firewall was changed")
+    verify = subprocess.run([ufw, "status"], text=True, capture_output=True,
+                            check=False, timeout=20)
+    confirmed = verify.returncode == 0 and any(
+        re.match(r"^\s*80(?:/tcp)?\s+ALLOW\s+IN\b", line, re.I)
+        for line in verify.stdout.splitlines()
+    )
+    if not confirmed:
+        subprocess.run([ufw, "--force", "delete", "allow", "80/tcp"],
+                       text=True, capture_output=True, check=False, timeout=30)
+        fail("The TCP/80 UFW rule could not be verified; the new rule was rolled back")
+    return {"opened": True, "already_allowed": False, "firewall_changed": True,
+            "firewall": "ufw", "tcp_port": 80}
+
+
+def hysteria_validate(domain, ports):
+    """Validate a Hysteria endpoint request without changing the host."""
+    if not isinstance(domain, str):
+        fail("Enter a valid public domain name")
+    domain = domain.strip().lower().rstrip(".")
+    if (not domain or len(domain) > 253 or "." not in domain
+            or not re.fullmatch(
+                r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
+                r"[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?",
+                domain,
+            )):
+        fail("Enter a valid fully qualified domain name")
+    if not isinstance(ports, str) or not ports or len(ports) > 64:
+        fail("Enter one or more UDP ports separated by commas")
+    raw_ports = [item.strip() for item in ports.split(",")]
+    if not raw_ports or len(raw_ports) > 8 or any(
+            not item or not item.isascii() or not item.isdecimal() for item in raw_ports):
+        fail("Enter up to 8 individual UDP ports separated by commas")
+    numbers = [int(item, 10) for item in raw_ports]
+    if any(number < 1 or number > 65535 for number in numbers):
+        fail("UDP ports must be between 1 and 65535")
+    if len(set(numbers)) != len(numbers):
+        fail("Remove duplicate UDP ports")
+    return {
+        "valid": True,
+        "domain": domain,
+        "udp_ports": numbers,
+        "listener_strategy": "separate-listeners",
+        "service_changed": False,
+        "firewall_changed": False,
+        "dns_checked": False,
+        "ports_checked": False,
+    }
+
+
+def hysteria_readiness(domain, ports):
+    """Perform read-only DNS and UDP-listener checks for validated input."""
+    result = hysteria_validate(domain, ports)
+    getent = shutil.which("getent")
+    ss = shutil.which("ss")
+    dns_addresses = []
+    dns_checked = False
+    if getent:
+        try:
+            lookup = subprocess.run(
+                [getent, "ahosts", result["domain"]], text=True,
+                capture_output=True, check=False, timeout=10,
+            )
+            dns_checked = True
+            if lookup.returncode == 0:
+                dns_addresses = sorted({
+                    line.split()[0] for line in lookup.stdout.splitlines()
+                    if line.split()
+                })
+        except (OSError, subprocess.TimeoutExpired):
+            # A command disappearing or failing to spawn is an unavailable check,
+            # not evidence that DNS does not resolve.
+            dns_checked = True
+
+    listeners = None
+    ports_checked = False
+    if ss:
+        try:
+            listing = subprocess.run(
+                [ss, "-H", "-lun"], text=True, capture_output=True,
+                check=False, timeout=10,
+            )
+            ports_checked = listing.returncode == 0
+            if ports_checked:
+                listeners = set()
+                for line in listing.stdout.splitlines():
+                    fields = line.split()
+                    if len(fields) < 4:
+                        continue
+                    try:
+                        listeners.add(int(fields[3].rsplit(":", 1)[1]))
+                    except (ValueError, IndexError):
+                        continue
+        except (OSError, subprocess.TimeoutExpired):
+            # Never mark a port free when socket inspection could not run.
+            pass
+
+    occupied = sorted(set(result["udp_ports"]) & listeners) if listeners is not None else []
+    unknown = listeners is None
+    result.update({
+        "dns_checked": dns_checked,
+        "dns_resolves": bool(dns_addresses),
+        "dns_addresses": dns_addresses,
+        "ports_checked": ports_checked,
+        "occupied_ports": occupied,
+        "port_check_status": "checked" if ports_checked else "unavailable",
+        "service_changed": False,
+        "firewall_changed": False,
+    })
+    if unknown:
+        result["available_ports"] = []
+    else:
+        result["available_ports"] = [
+            port for port in result["udp_ports"] if port not in occupied
+        ]
+    return result
+
+
+def hysteria_single_port_preview(domain, port, cert_path, key_path):
+    """Read-only preflight for one Hysteria UDP port and manually supplied TLS files."""
+    endpoint = hysteria_validate(domain, str(port))
+    if len(endpoint["udp_ports"]) != 1:
+        fail("Configure exactly one UDP port")
+    port = endpoint["udp_ports"][0]
+
+    paths = []
+    for label, value in (("certificate", cert_path), ("private key", key_path)):
+        if (not isinstance(value, str) or not value or len(value) > 4096
+                or not os.path.isabs(value) or any(ord(ch) < 32 or ord(ch) == 127 for ch in value)):
+            fail("Enter an absolute, valid " + label + " path")
+        resolved = os.path.realpath(value)
+        try:
+            info = os.stat(resolved)
+        except OSError:
+            fail("The " + label + " file is unavailable")
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink < 1:
+            fail("The " + label + " path must resolve to a regular file")
+        paths.append(resolved)
+    cert_path, key_path = paths
+    openssl = shutil.which("openssl")
+    runuser = shutil.which("runuser")
+    if not openssl or not runuser:
+        fail("OpenSSL and runuser are required for safe certificate inspection")
+
+    def inspect(command, message):
+        try:
+            result = subprocess.run(command, text=True, capture_output=True,
+                                    check=False, timeout=15)
+        except (OSError, subprocess.TimeoutExpired):
+            fail(message)
+        if result.returncode != 0:
+            fail(message)
+        return result.stdout.strip()
+
+    inspect([openssl, "x509", "-in", cert_path, "-noout", "-checkhost", endpoint["domain"]],
+            "The TLS certificate does not match the selected domain")
+    inspect([openssl, "x509", "-in", cert_path, "-noout", "-checkend", "86400"],
+            "The TLS certificate is expired or expires within 24 hours")
+    inspect([openssl, "pkey", "-in", key_path, "-noout", "-check"],
+            "The TLS private key is invalid or unreadable")
+    cert_public = inspect([openssl, "x509", "-in", cert_path, "-pubkey", "-noout"],
+                          "Unable to read the certificate public key")
+    key_public = inspect([openssl, "pkey", "-in", key_path, "-pubout"],
+                         "Unable to read the private key public component")
+    if cert_public != key_public:
+        fail("The TLS certificate and private key do not match")
+
+    account = subprocess.run(["getent", "passwd", "hysteria"], text=True,
+                             capture_output=True, check=False, timeout=10)
+    if account.returncode != 0:
+        fail("The Hysteria service account is not installed")
+    for path in (cert_path, key_path):
+        readable = subprocess.run([runuser, "-u", "hysteria", "--", "test", "-r", path],
+                                  text=True, capture_output=True, check=False, timeout=10)
+        if readable.returncode != 0:
+            fail("The Hysteria service account cannot read the selected TLS files")
+
+    readiness = hysteria_readiness(endpoint["domain"], str(port))
+    return {
+        "valid": True,
+        "domain": endpoint["domain"],
+        "udp_port": port,
+        "certificate_path": cert_path,
+        "private_key_path": key_path,
+        "certificate_domain_match": True,
+        "certificate_valid_for_at_least_24_hours": True,
+        "private_key_valid": True,
+        "certificate_key_match": True,
+        "service_user_can_read_files": True,
+        "dns_checked": readiness["dns_checked"],
+        "dns_resolves": readiness["dns_resolves"],
+        "dns_addresses": readiness["dns_addresses"],
+        "port_check_status": readiness["port_check_status"],
+        "port_available": readiness["ports_checked"] and not readiness["occupied_ports"],
+        "occupied_ports": readiness["occupied_ports"],
+        "configuration_written": False,
+        "service_changed": False,
+        "firewall_changed": False,
+    }
+
+
 XRAY_CLIENTS_FILE = "xray-clients.json"
 
 
@@ -2460,10 +3382,56 @@ def xray_revoke_client(name):
 
 def handle_hysteria_action(request):
     action = request.get("action")
+    if action == "hysteria_validate":
+        if set(request) != {"action", "domain", "ports"}:
+            fail("Unexpected request fields")
+        print(json.dumps(hysteria_readiness(request["domain"], request["ports"])))
+        return True
     if action == "hysteria_install":
         if set(request) != {"action"}:
             fail("Unexpected request fields")
         print(json.dumps(hysteria_install()))
+        return True
+    if action == "hysteria_single_port_preview":
+        if set(request) != {"action", "domain", "port", "cert_path", "key_path"}:
+            fail("Unexpected request fields")
+        print(json.dumps(hysteria_single_port_preview(
+            request["domain"], request["port"], request["cert_path"], request["key_path"]
+        )))
+        return True
+    if action == "hysteria_firewall_open_udp":
+        if set(request) != {"action"}:
+            fail("Unexpected request fields")
+        print(json.dumps(hysteria_firewall_open_udp()))
+        return True
+    if action == "hysteria_http01_preview":
+        if set(request) != {"action", "domain", "port"}:
+            fail("Unexpected request fields")
+        print(json.dumps(hysteria_http01_preview(request["domain"], request["port"])))
+        return True
+    if action == "hysteria_http01_configure":
+        if set(request) != {"action", "domain", "port", "email"}:
+            fail("Unexpected request fields")
+        print(json.dumps(hysteria_configure_http01(
+            request["domain"], request["port"], request["email"]
+        )))
+        return True
+    if action == "hysteria_firewall_open_http01_tcp":
+        if set(request) != {"action"}:
+            fail("Unexpected request fields")
+        print(json.dumps(hysteria_firewall_open_http01_tcp()))
+        return True
+    if action == "hysteria_start_service":
+        if set(request) != {"action"}:
+            fail("Unexpected request fields")
+        print(json.dumps(hysteria_start_service()))
+        return True
+    if action == "hysteria_single_port_configure":
+        if set(request) != {"action", "domain", "port", "cert_path", "key_path"}:
+            fail("Unexpected request fields")
+        print(json.dumps(hysteria_configure_single_port(
+            request["domain"], request["port"], request["cert_path"], request["key_path"]
+        )))
         return True
     return False
 

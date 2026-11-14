@@ -393,6 +393,209 @@ def test_openvpn_profile_download_rejects_invalid_name(client, monkeypatch):
 
 
 
+def test_hysteria_validate_route_requires_login_and_calls_helper(client, monkeypatch):
+    response = client.post("/vpn/hysteria/validate", data={
+        "domain": "vpn.example.com", "ports": "53,8443"
+    })
+    assert response.status_code == 302
+    login(client)
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(
+            args, 0,
+            stdout='{"valid":true,"domain":"vpn.example.com","udp_ports":[53,8443],"service_changed":false}',
+            stderr="",
+        )
+
+    monkeypatch.setattr("app.subprocess.run", fake_run)
+    response = client.post("/vpn/hysteria/validate", data={
+        "domain": "vpn.example.com", "ports": "53,8443"
+    })
+    assert response.status_code == 302
+    request = __import__("json").loads(calls[0][1]["input"])
+    assert request == {
+        "action": "hysteria_validate", "domain": "vpn.example.com", "ports": "53,8443"
+    }
+
+
+
+def test_hysteria_configure_route_requires_login_and_shows_one_time_credentials(client, monkeypatch):
+    response = client.post("/vpn/hysteria/configure", data={
+        "domain": "vpn.example.com", "port": "8443",
+        "cert_path": "/etc/ssl/fullchain.pem", "key_path": "/etc/ssl/privkey.pem"
+    })
+    assert response.status_code == 302
+    login(client)
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(
+            args, 0,
+            stdout=(
+                '{"configured":true,"domain":"vpn.example.com","udp_port":8443,'
+                '"config_path":"/etc/hysteria/iyke.yaml","service_unit":"iyke-hysteria.service",'
+                '"service_state":"not-started","service_enabled":false,"firewall_changed":false,'
+                '"password":"test-secret-value","client_uri":"hysteria2://test-secret-value@vpn.example.com:8443/?sni=vpn.example.com"}'
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr("app.subprocess.run", fake_run)
+    response = client.post("/vpn/hysteria/configure", data={
+        "domain": "vpn.example.com", "port": "8443",
+        "cert_path": "/etc/ssl/fullchain.pem", "key_path": "/etc/ssl/privkey.pem"
+    })
+    assert response.status_code == 200
+    assert b"test-secret-value" in response.data
+    assert response.headers["Cache-Control"] == "no-store, private, max-age=0"
+    request = __import__("json").loads(calls[0][1]["input"])
+    assert request == {
+        "action": "hysteria_single_port_configure",
+        "domain": "vpn.example.com", "port": "8443",
+        "cert_path": "/etc/ssl/fullchain.pem", "key_path": "/etc/ssl/privkey.pem"
+    }
+    assert calls[0][1]["timeout"] == 180
+
+
+
+def test_hysteria_start_route_requires_login_and_keeps_firewall_unchanged(client, monkeypatch):
+    response = client.post("/vpn/hysteria/start")
+    assert response.status_code == 302
+    login(client)
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(
+            args, 0,
+            stdout='{"started":true,"enabled":true,"service_state":"active",'
+                   '"service_unit":"iyke-hysteria.service","firewall_changed":false,'
+                   '"udp_port":8443,"tls_mode":"manual"}',
+            stderr="",
+        )
+
+    monkeypatch.setattr("app.subprocess.run", fake_run)
+    response = client.post("/vpn/hysteria/start")
+    assert response.status_code == 302
+    request = __import__("json").loads(calls[0][1]["input"])
+    assert request == {"action": "hysteria_start_service"}
+    assert calls[0][1]["timeout"] == 240
+
+
+
+def test_hysteria_firewall_route_requires_login_and_calls_helper(client, monkeypatch):
+    response = client.post("/vpn/hysteria/firewall/open")
+    assert response.status_code == 302
+    login(client)
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(
+            args, 0,
+            stdout='{"opened":true,"already_allowed":false,"firewall_changed":true,'
+                   '"firewall":"ufw","udp_port":8443}',
+            stderr="",
+        )
+
+    monkeypatch.setattr("app.subprocess.run", fake_run)
+    response = client.post("/vpn/hysteria/firewall/open")
+    assert response.status_code == 302
+    request = __import__("json").loads(calls[0][1]["input"])
+    assert request == {"action": "hysteria_firewall_open_udp"}
+    assert calls[0][1]["timeout"] == 90
+
+
+
+def test_hysteria_http01_preview_route_requires_login_and_calls_helper(client, monkeypatch):
+    response = client.post("/vpn/hysteria/acme/preview", data={
+        "domain": "vpn.example.com", "port": "8443"
+    })
+    assert response.status_code == 302
+    login(client)
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(
+            args, 0,
+            stdout='{"valid":true,"domain":"vpn.example.com","udp_port":8443,'
+                   '"tcp80_available":true,"tcp80_allowed":true,"firewall_changed":false}',
+            stderr="",
+        )
+
+    monkeypatch.setattr("app.subprocess.run", fake_run)
+    response = client.post("/vpn/hysteria/acme/preview", data={
+        "domain": "vpn.example.com", "port": "8443"
+    })
+    assert response.status_code == 302
+    request = __import__("json").loads(calls[0][1]["input"])
+    assert request == {
+        "action": "hysteria_http01_preview",
+        "domain": "vpn.example.com", "port": "8443",
+    }
+
+
+def test_hysteria_http01_configure_route_returns_private_one_time_credentials(client, monkeypatch):
+    login(client)
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(
+            args, 0,
+            stdout='{"configured":true,"tls_mode":"acme-http01",'
+                   '"domain":"vpn.example.com","udp_port":8443,'
+                   '"config_path":"/etc/hysteria/iyke.yaml",'
+                   '"service_unit":"iyke-hysteria.service",'
+                   '"service_state":"not-started","service_enabled":false,'
+                   '"firewall_changed":false,"password":"one-time-secret",'
+                   '"client_uri":"hysteria2://one-time-secret@vpn.example.com:8443"}',
+            stderr="",
+        )
+
+    monkeypatch.setattr("app.subprocess.run", fake_run)
+    response = client.post("/vpn/hysteria/acme/configure", data={
+        "domain": "vpn.example.com", "port": "8443", "email": "admin@example.com"
+    })
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store, private, max-age=0"
+    assert response.headers["Referrer-Policy"] == "no-referrer"
+    assert b"one-time-secret" in response.data
+    request = __import__("json").loads(calls[0][1]["input"])
+    assert request == {
+        "action": "hysteria_http01_configure",
+        "domain": "vpn.example.com", "port": "8443", "email": "admin@example.com",
+    }
+    assert calls[0][1]["timeout"] == 180
+
+
+def test_hysteria_http01_firewall_route_requires_login_and_calls_helper(client, monkeypatch):
+    response = client.post("/vpn/hysteria/acme/firewall/open")
+    assert response.status_code == 302
+    login(client)
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(
+            args, 0,
+            stdout='{"opened":true,"already_allowed":false,"firewall_changed":true,'
+                   '"firewall":"ufw","tcp_port":80}',
+            stderr="",
+        )
+
+    monkeypatch.setattr("app.subprocess.run", fake_run)
+    response = client.post("/vpn/hysteria/acme/firewall/open")
+    assert response.status_code == 302
+    request = __import__("json").loads(calls[0][1]["input"])
+    assert request == {"action": "hysteria_firewall_open_http01_tcp"}
+    assert calls[0][1]["timeout"] == 90
+
+
 def test_hysteria_install_route_requires_login_and_calls_helper(client, monkeypatch):
     response = client.post("/vpn/hysteria/install")
     assert response.status_code == 302

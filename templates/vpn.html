@@ -133,12 +133,96 @@
     {% if vpn.hysteria.installed %}
       <div class="vpn-instance"><b>System service</b><span class="vpn-state {{ 'available' if vpn.hysteria.service == 'active' else 'missing' }}">{{ vpn.hysteria.service|title }}</span></div>
       <div class="vpn-instance"><b>Configuration</b><span class="vpn-state">{{ vpn.hysteria.config_status|title }}</span></div>
-      <p class="muted">The official binary, systemd unit and example configuration are installed. Configure a real domain, TLS certificate and authentication in <code>/etc/hysteria/config.yaml</code> before starting the service.</p>
+      <p class="muted">Check DNS resolution and current UDP listeners for your selected domain and ports. A local listener is treated conservatively as a conflict; DNS resolution alone does not prove the domain points to this server. This check does not inspect TLS, open the firewall, write configuration or start services.</p>
+      <form method="post" action="{{ url_for('validate_hysteria') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label for="hysteria-domain">Public domain</label>
+        <input id="hysteria-domain" name="domain" maxlength="253" required placeholder="vpn.example.com">
+        <label for="hysteria-ports">UDP ports (comma-separated, up to 8)</label>
+        <input id="hysteria-ports" name="ports" maxlength="64" required inputmode="numeric" placeholder="53,8443">
+        <button type="submit">Check domain and UDP ports</button>
+      </form>
+      <hr>
+      <h3>Automatic TLS certificate (ACME HTTP-01)</h3>
+      <p class="muted">This option is available only when TCP/80 is free, the domain's IPv4 DNS points only to this VPS, no AAAA record is present, and UFW is active. Hysteria will use TCP/80 for certificate issuance and renewals. Existing Caddy/Nginx listeners are never stopped or reconfigured. The VPS provider firewall must also permit inbound TCP/80.</p>
+      <form method="post" action="{{ url_for('preview_hysteria_http01') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label for="hysteria-acme-preview-domain">Domain</label>
+        <input id="hysteria-acme-preview-domain" name="domain" maxlength="253" required placeholder="vpn.example.com">
+        <label for="hysteria-acme-preview-port">Single Hysteria UDP port</label>
+        <input id="hysteria-acme-preview-port" name="port" type="number" min="1" max="65535" required placeholder="8443">
+        <button type="submit" class="secondary">Check HTTP-01 readiness (read-only)</button>
+      </form>
+      <form method="post" action="{{ url_for('configure_hysteria_http01') }}" onsubmit="return confirm('Create the Hysteria ACME HTTP-01 configuration? This does not start the service or change firewall rules. TCP/80 must be free and reachable for issuance and renewals.');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label for="hysteria-acme-domain">Domain</label>
+        <input id="hysteria-acme-domain" name="domain" maxlength="253" required placeholder="vpn.example.com">
+        <label for="hysteria-acme-port">Single Hysteria UDP port</label>
+        <input id="hysteria-acme-port" name="port" type="number" min="1" max="65535" required placeholder="8443">
+        <label for="hysteria-acme-email">Email for certificate notices</label>
+        <input id="hysteria-acme-email" name="email" type="email" maxlength="254" required placeholder="admin@example.com">
+        <button type="submit">Confirm and create ACME configuration</button>
+      </form>
+      {% if vpn.hysteria.config_status == 'configured' and vpn.hysteria.tls_mode == 'acme-http01' and vpn.hysteria.service != 'active' %}
+      <p class="muted">Before starting, allow TCP/80 in UFW below. Keep TCP/80 reachable afterward so Hysteria can renew the certificate automatically.</p>
+      <form method="post" action="{{ url_for('open_hysteria_http01_firewall') }}" onsubmit="return confirm('Allow incoming TCP port 80 in UFW for ACME certificate issuance and future renewals? This is a persistent firewall change.');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="secondary">Confirm and allow TCP/80 in UFW</button>
+      </form>
+      {% endif %}
+      <hr>
+      <h3>Apply single-port configuration (explicit confirmation)</h3>
+      <p class="muted">This creates a dedicated root-owned configuration and a separate systemd unit, then reloads systemd. It does not start or enable the service and does not change firewall rules. The certificate and key must already be installed and readable by the Hysteria account.</p>
+      <form method="post" action="{{ url_for('configure_hysteria_single_port') }}" onsubmit="return confirm('Create the dedicated Hysteria configuration and disabled service unit? The service will not start and the firewall will not change.');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label for="hysteria-apply-domain">Domain</label>
+        <input id="hysteria-apply-domain" name="domain" maxlength="253" required placeholder="vpn.example.com">
+        <label for="hysteria-apply-port">Single UDP port</label>
+        <input id="hysteria-apply-port" name="port" type="number" min="1" max="65535" required placeholder="8443">
+        <label for="hysteria-apply-cert-path">TLS certificate or full-chain path</label>
+        <input id="hysteria-apply-cert-path" name="cert_path" maxlength="4096" required placeholder="/etc/letsencrypt/live/vpn.example.com/fullchain.pem">
+        <label for="hysteria-apply-key-path">TLS private-key path</label>
+        <input id="hysteria-apply-key-path" name="key_path" maxlength="4096" required placeholder="/etc/letsencrypt/live/vpn.example.com/privkey.pem">
+        <button type="submit">Confirm and create disabled configuration</button>
+      </form>
+      {% if vpn.hysteria.config_status == 'configured' and vpn.hysteria.service != 'active' %}
+      <hr>
+      <h3>Start the configured Hysteria service (explicit confirmation)</h3>
+      <p class="muted">This verifies the dedicated configuration and service unit, then starts and enables only iyke-hysteria.service. It does not open or change firewall rules. Client connections may remain blocked until you separately approve a UDP firewall rule.</p>
+      <form method="post" action="{{ url_for('start_hysteria_service') }}" onsubmit="return confirm('Start and enable only iyke-hysteria.service? No firewall rules will be changed.');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit">Confirm and start Hysteria 2</button>
+      </form>
+      {% endif %}
+      {% if vpn.hysteria.config_status == 'configured' and vpn.hysteria.service == 'active' %}
+      <hr>
+      <h3>Allow the Hysteria UDP port through UFW (explicit confirmation)</h3>
+      <p class="muted">This opens only the UDP port recorded in the dedicated Hysteria configuration, and only when UFW is active. Existing overlapping deny rules are not overridden. Other firewall managers are not changed.</p>
+      <form method="post" action="{{ url_for('open_hysteria_firewall') }}" onsubmit="return confirm('Add the configured Hysteria UDP port to UFW? This changes the firewall to allow incoming UDP on that one port only.');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit">Confirm and allow Hysteria UDP port</button>
+      </form>
+      {% endif %}
+      <hr>
+      <h3>Single-port TLS preflight (read-only)</h3>
+      <p class="muted">Check one UDP port and an existing certificate/private-key pair. The files must match the domain and be readable by the Hysteria service account. This preview does not create configuration, start services or change firewall rules.</p>
+      <form method="post" action="{{ url_for('preview_hysteria_single_port') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label for="hysteria-preview-domain">Domain</label>
+        <input id="hysteria-preview-domain" name="domain" maxlength="253" required placeholder="vpn.example.com">
+        <label for="hysteria-preview-port">Single UDP port</label>
+        <input id="hysteria-preview-port" name="port" type="number" min="1" max="65535" required placeholder="8443">
+        <label for="hysteria-cert-path">TLS certificate or full-chain path</label>
+        <input id="hysteria-cert-path" name="cert_path" maxlength="4096" required placeholder="/etc/letsencrypt/live/vpn.example.com/fullchain.pem">
+        <label for="hysteria-key-path">TLS private-key path</label>
+        <input id="hysteria-key-path" name="key_path" maxlength="4096" required placeholder="/etc/letsencrypt/live/vpn.example.com/privkey.pem">
+        <button type="submit">Preview TLS and UDP setup</button>
+      </form>
     {% else %}
       <p class="muted">Install the official Hysteria 2 server binary and systemd unit. Installation does not start the service, configure TLS or authentication, open UDP ports, or change existing VPN services.</p>
       <form method="post" action="{{ url_for('install_hysteria') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit">Install Hysteria 2</button></form>
     {% endif %}
-    <p class="muted">Installation refuses to overwrite an existing Hysteria binary, service, configuration directory or system account. The installer source is pinned to an immutable upstream commit.</p>
+    <p class="muted">Installation refuses to overwrite an existing Hysteria binary, service, configuration directory or system account. The installer source is pinned to an immutable upstream commit. Individual non-contiguous UDP ports require separate listeners; they are not treated as one Hysteria port range.</p>
   </section>
 </div>
 {% endblock %}

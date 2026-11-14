@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Hysteria 2 configuration created · Iyke VPS Manager{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Hysteria 2 configuration prepared</h1>
+  <p class="muted">A dedicated configuration and disabled systemd service unit were created for {{ result.domain }} on UDP/{{ result.udp_port }}.</p>
+  {% if result.tls_mode == "acme-http01" %}<p class="notice"><b>Automatic certificate setup</b><span>HTTP-01 certificate issuance begins only when you explicitly start the service. TCP/80 must be free and reachable from the public internet, and must remain reachable for automatic renewals. The ACME account and certificate data are stored in a private directory owned by the Hysteria service account.</span></p>{% else %}<p class="muted">TLS mode: manually supplied certificate and private key.</p>{% endif %}
+  <div class="alert warning">
+    Save the password and client URI below now. They are shown only in this response. The service is not running or enabled, and no firewall rule was changed, so the client cannot connect yet.
+  </div>
+  <h2>Authentication password</h2>
+  <pre>{{ result.password }}</pre>
+  <h2>Client URI</h2>
+  <pre>{{ result.client_uri }}</pre>
+  <h2>Server changes</h2>
+  <ul>
+    <li>Configuration: <code>{{ result.config_path }}</code> (root-owned, mode 0640)</li>
+    <li>Service unit: <code>{{ result.service_unit }}</code> (created, not enabled)</li>
+    <li>Service state: not started</li>
+    <li>Firewall: unchanged</li>
+  </ul>
+  <p class="muted">Next, review the service-start and firewall steps separately. {% if result.tls_mode == "acme-http01" %}Allow TCP/80 in UFW before starting so the ACME HTTP-01 challenge can complete.{% endif %} Do not share the password or URI publicly.</p>
+  <a href="{{ url_for('vpn_services') }}">Return to VPN services</a>
+</section>
+{% endblock %}
