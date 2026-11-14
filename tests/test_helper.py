@@ -447,6 +447,7 @@ def test_openvpn_crl_state_verifies_crl_against_matching_ca(tmp_path, monkeypatc
         (pki / name).chmod(0o600)
     _pretend_root_owned(monkeypatch)
     monkeypatch.setattr(helper, "_openvpn_pki_candidates", lambda: [str(pki)])
+    monkeypatch.setattr(helper, "_openvpn_ca_cert_matches", lambda config_ca, selected_pki: True)
     monkeypatch.setattr(helper.shutil, "which", lambda name: "/usr/bin/openssl")
     calls = []
     def fake_run(args, **kwargs):
@@ -1323,6 +1324,7 @@ def test_openvpn_get_profile_builds_inline_profile_only_for_verified_server(monk
     monkeypatch.setattr(helper, "_openvpn_server_config_paths", lambda: ["/etc/openvpn/server/server.conf"])
     monkeypatch.setattr(helper, "_unit_state", lambda unit: "active")
     monkeypatch.setattr(helper, "_openvpn_runtime_config_matches", lambda unit, path: True)
+    monkeypatch.setattr(helper, "_openvpn_config_uses_pki_ca", lambda config_path, directives, selected_pki: True)
     monkeypatch.setattr(helper, "_openvpn_certificate_is_client", lambda path: True)
     monkeypatch.setattr(helper, "_openvpn_config_directives", lambda path: {
         "port": [["1194"]], "proto": [["udp"]], "dev": [["tun"]],
