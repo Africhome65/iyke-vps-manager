@@ -152,6 +152,7 @@ def _pretend_root_owned(monkeypatch):
 
 def test_openvpn_clients_discovers_one_trusted_database(tmp_path, monkeypatch):
     pki = tmp_path / "pki"
+    _pretend_root_owned(monkeypatch)
     for name in ("issued", "private"):
         (pki / name).mkdir(parents=True, mode=0o700)
         (pki / name).chmod(0o700)
@@ -1183,7 +1184,7 @@ def test_openvpn_failed_issuance_repairs_crl_for_already_revoked_index(tmp_path,
     key = pki / "private" / "phone01.key"
     key.write_text("PRIVATE KEY MATERIAL", encoding="utf-8")
     key.chmod(0o600)
-    revoked = "R\\t301231235959Z\\t261114000000Z\\t01\\tunknown\\t/CN=phone01\\n"
+    revoked = "R\t301231235959Z\t261114000000Z\t01\tunknown\t/CN=phone01\n"
     monkeypatch.setattr(helper, "_read_openvpn_index", lambda path: revoked)
     crl_state = {"contains": False}
     monkeypatch.setattr(
