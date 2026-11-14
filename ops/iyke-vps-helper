@@ -2177,7 +2177,7 @@ def _hysteria_udp_listener_present(port):
     if not ss:
         fail("UDP listener inspection is unavailable; service readiness cannot be verified")
     try:
-        result = subprocess.run([ss, "-H", "-lun"], text=True, capture_output=True,
+        result = subprocess.run([ss, "-H", "-lunp"], text=True, capture_output=True,
                                 check=False, timeout=10)
     except (OSError, subprocess.TimeoutExpired):
         fail("UDP listener inspection failed; service readiness cannot be verified")
@@ -2191,7 +2191,7 @@ def _hysteria_udp_listener_present(port):
             local_port = int(fields[3].rsplit(":", 1)[1])
         except (ValueError, IndexError):
             fail("UDP listener output could not be safely interpreted")
-        if local_port == port:
+        if local_port == port and re.search(r'users:\\(\\("hysteria",pid=\\d+', line):
             return True
     return False
 
