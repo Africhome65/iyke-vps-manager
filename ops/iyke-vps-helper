@@ -1209,6 +1209,18 @@ def _save_xray_backup(raw):
     return path
 
 
+def _restore_xray_config(original_raw, metadata):
+    """Restore the previously validated configuration and restart Xray."""
+    _atomic_xray_config_write(original_raw, metadata)
+    try:
+        result = subprocess.run(["systemctl", "restart", "xray.service"], text=True,
+                                capture_output=True, check=False, timeout=45)
+        if result.returncode or _unit_state("xray.service") != "active":
+            fail("Previous Xray configuration was restored on disk, but the service is not active")
+    except (OSError, subprocess.TimeoutExpired):
+        fail("Previous Xray configuration was restored on disk, but service restart failed")
+
+
 def _apply_xray_config_change(candidate, original_raw, metadata):
     """Validate, back up, atomically install, and restart with rollback on failure."""
     encoded = (json.dumps(candidate, indent=2, ensure_ascii=False) + "\\n").encode("utf-8")
@@ -1285,7 +1297,7 @@ def xray_create_client(name, protocol):
         else:
             new_client["email"] = name
         clients.append(new_client)
-        _apply_xray_config_change(config, original_raw, metadata)
+        backup = _apply_xray_config_change(config, original_raw, metadata)
         try:
             _xray_registry_add(rows, name, protocol, client_id)
         except SystemExit:
@@ -1302,7 +1314,7 @@ def xray_create_client(name, protocol):
                 fail("Client config was applied but registry commit failed; manual recovery is required")
             raise
         return {"created": True, "name": name, "protocol": protocol,
-                "backup": os.path.basename(state_path("xray-config-latest.bak"))}
+                "backup": os.path.basename(backup)}
 
 
 def xray_revoke_client(name):
@@ -1330,7 +1342,14 @@ def xray_revoke_client(name):
             if not (isinstance(row, dict) and row.get("id") == client["id"])
         ]
         _apply_xray_config_change(config, original_raw, metadata)
-        _save_xray_clients([row for row in rows if row["name"] != name])
+        try:
+            _save_xray_clients([row for row in rows if row["name"] != name])
+        except SystemExit:
+            try:
+                _restore_xray_config(original_raw, metadata)
+            except SystemExit:
+                fail("Client was removed from Xray but registry update and rollback failed; manual recovery is required")
+            raise
         return {"revoked": True, "name": name}
 
 
