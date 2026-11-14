@@ -40,7 +40,7 @@
     {% if vpn.openvpn.installed %}
       {% if vpn.openvpn.instances %}<div class="vpn-list">{% for item in vpn.openvpn.instances %}<div class="vpn-instance"><div><b>{{ item.name }}</b><small class="muted">CRL: {{ 'configured; file present' if item.crl_configured and item.crl_file_present else ('configured; file missing or unsafe' if item.crl_configured else 'not configured') }}</small></div><span class="vpn-state {{ 'available' if item.status == 'active' else 'missing' }}">{{ item.status|title }}</span></div>{% endfor %}</div>
       {% else %}<p class="empty">OpenVPN is installed, but no server configuration files were found.</p>{% endif %}
-    {% else %}<p class="muted">OpenVPN installation and client management will be added after the WireGuard workflow is tested.</p>{% endif %}
+    {% else %}<p class="muted">OpenVPN client management is being developed. This panel currently reports service and CRL status only.</p>{% endif %}
   </section>
   <section class="panel">
     <div class="section-heading"><div><h2>Xray-core</h2><p class="muted">Engine for VLESS and VMess</p></div><span class="vpn-state {{ 'available' if vpn.xray.installed else 'missing' }}">{{ 'Installed' if vpn.xray.installed else 'Not installed' }}</span></div>
