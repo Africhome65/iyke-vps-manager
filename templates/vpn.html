@@ -133,12 +133,20 @@
     {% if vpn.hysteria.installed %}
       <div class="vpn-instance"><b>System service</b><span class="vpn-state {{ 'available' if vpn.hysteria.service == 'active' else 'missing' }}">{{ vpn.hysteria.service|title }}</span></div>
       <div class="vpn-instance"><b>Configuration</b><span class="vpn-state">{{ vpn.hysteria.config_status|title }}</span></div>
-      <p class="muted">The official binary, systemd unit and example configuration are installed. Configure a real domain, TLS certificate and authentication in <code>/etc/hysteria/config.yaml</code> before starting the service.</p>
+      <p class="muted">The official binary, systemd unit and example configuration are installed. Validate your public domain and the individual UDP ports you want to use. This input check does not inspect DNS, port availability or TLS, and does not apply changes.</p>
+      <form method="post" action="{{ url_for('validate_hysteria') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label for="hysteria-domain">Public domain</label>
+        <input id="hysteria-domain" name="domain" maxlength="253" required placeholder="vpn.example.com">
+        <label for="hysteria-ports">UDP ports (comma-separated, up to 8)</label>
+        <input id="hysteria-ports" name="ports" maxlength="64" required inputmode="numeric" placeholder="53,8443">
+        <button type="submit">Validate domain and ports</button>
+      </form>
     {% else %}
       <p class="muted">Install the official Hysteria 2 server binary and systemd unit. Installation does not start the service, configure TLS or authentication, open UDP ports, or change existing VPN services.</p>
       <form method="post" action="{{ url_for('install_hysteria') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit">Install Hysteria 2</button></form>
     {% endif %}
-    <p class="muted">Installation refuses to overwrite an existing Hysteria binary, service, configuration directory or system account. The installer source is pinned to an immutable upstream commit.</p>
+    <p class="muted">Installation refuses to overwrite an existing Hysteria binary, service, configuration directory or system account. The installer source is pinned to an immutable upstream commit. Individual non-contiguous UDP ports require separate listeners; they are not treated as one Hysteria port range.</p>
   </section>
 </div>
 {% endblock %}
