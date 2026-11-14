@@ -1124,6 +1124,7 @@ def test_openvpn_create_client_revokes_certificate_after_post_issue_validation_f
     monkeypatch.setattr(helper, "_openvpn_easyrsa_path", lambda: str(script))
     monkeypatch.setattr(helper, "_read_openvpn_index", lambda path: index_state["value"])
     monkeypatch.setattr(helper, "_openvpn_certificate_is_client", lambda path: False)
+    monkeypatch.setattr(helper, "_openvpn_crl_contains_serial", lambda path, serial: True)
 
     def fake_issue(args, **kwargs):
         key = pki / "private" / "phone01.key"
