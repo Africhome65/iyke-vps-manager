@@ -2016,6 +2016,71 @@ def hysteria_validate(domain, ports):
     }
 
 
+def hysteria_readiness(domain, ports):
+    """Perform read-only DNS and UDP-listener checks for validated input."""
+    result = hysteria_validate(domain, ports)
+    getent = shutil.which("getent")
+    ss = shutil.which("ss")
+    dns_addresses = []
+    dns_checked = False
+    if getent:
+        try:
+            lookup = subprocess.run(
+                [getent, "ahosts", result["domain"]], text=True,
+                capture_output=True, check=False, timeout=10,
+            )
+            dns_checked = True
+            if lookup.returncode == 0:
+                dns_addresses = sorted({
+                    line.split()[0] for line in lookup.stdout.splitlines()
+                    if line.split()
+                })
+        except subprocess.TimeoutExpired:
+            dns_checked = True
+
+    listeners = None
+    ports_checked = False
+    if ss:
+        try:
+            listing = subprocess.run(
+                [ss, "-H", "-lun"], text=True, capture_output=True,
+                check=False, timeout=10,
+            )
+            ports_checked = listing.returncode == 0
+            if ports_checked:
+                listeners = set()
+                for line in listing.stdout.splitlines():
+                    fields = line.split()
+                    if len(fields) < 4:
+                        continue
+                    try:
+                        listeners.add(int(fields[3].rsplit(":", 1)[1]))
+                    except (ValueError, IndexError):
+                        continue
+        except subprocess.TimeoutExpired:
+            pass
+
+    occupied = sorted(set(result["udp_ports"]) & listeners) if listeners is not None else []
+    unknown = listeners is None
+    result.update({
+        "dns_checked": dns_checked,
+        "dns_resolves": bool(dns_addresses),
+        "dns_addresses": dns_addresses,
+        "ports_checked": ports_checked,
+        "occupied_ports": occupied,
+        "port_check_status": "checked" if ports_checked else "unavailable",
+        "service_changed": False,
+        "firewall_changed": False,
+    })
+    if unknown:
+        result["available_ports"] = []
+    else:
+        result["available_ports"] = [
+            port for port in result["udp_ports"] if port not in occupied
+        ]
+    return result
+
+
 XRAY_CLIENTS_FILE = "xray-clients.json"
 
 
@@ -2498,7 +2563,7 @@ def handle_hysteria_action(request):
     if action == "hysteria_validate":
         if set(request) != {"action", "domain", "ports"}:
             fail("Unexpected request fields")
-        print(json.dumps(hysteria_validate(request["domain"], request["ports"])))
+        print(json.dumps(hysteria_readiness(request["domain"], request["ports"])))
         return True
     if action == "hysteria_install":
         if set(request) != {"action"}:
