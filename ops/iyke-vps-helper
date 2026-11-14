@@ -2084,6 +2084,89 @@ def hysteria_readiness(domain, ports):
     return result
 
 
+def hysteria_single_port_preview(domain, port, cert_path, key_path):
+    """Read-only preflight for one Hysteria UDP port and manually supplied TLS files."""
+    endpoint = hysteria_validate(domain, str(port))
+    if len(endpoint["udp_ports"]) != 1:
+        fail("Configure exactly one UDP port")
+    port = endpoint["udp_ports"][0]
+
+    paths = []
+    for label, value in (("certificate", cert_path), ("private key", key_path)):
+        if (not isinstance(value, str) or not value or len(value) > 4096
+                or not os.path.isabs(value) or any(ord(ch) < 32 or ord(ch) == 127 for ch in value)):
+            fail("Enter an absolute, valid " + label + " path")
+        resolved = os.path.realpath(value)
+        try:
+            info = os.stat(resolved)
+        except OSError:
+            fail("The " + label + " file is unavailable")
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink < 1:
+            fail("The " + label + " path must resolve to a regular file")
+        paths.append(resolved)
+    cert_path, key_path = paths
+    openssl = shutil.which("openssl")
+    runuser = shutil.which("runuser")
+    if not openssl or not runuser:
+        fail("OpenSSL and runuser are required for safe certificate inspection")
+
+    def inspect(command, message):
+        try:
+            result = subprocess.run(command, text=True, capture_output=True,
+                                    check=False, timeout=15)
+        except (OSError, subprocess.TimeoutExpired):
+            fail(message)
+        if result.returncode != 0:
+            fail(message)
+        return result.stdout.strip()
+
+    inspect([openssl, "x509", "-in", cert_path, "-noout", "-checkhost", endpoint["domain"]],
+            "The TLS certificate does not match the selected domain")
+    inspect([openssl, "x509", "-in", cert_path, "-noout", "-checkend", "86400"],
+            "The TLS certificate is expired or expires within 24 hours")
+    inspect([openssl, "pkey", "-in", key_path, "-noout", "-check"],
+            "The TLS private key is invalid or unreadable")
+    cert_public = inspect([openssl, "x509", "-in", cert_path, "-pubkey", "-noout"],
+                          "Unable to read the certificate public key")
+    key_public = inspect([openssl, "pkey", "-in", key_path, "-pubout"],
+                         "Unable to read the private key public component")
+    if cert_public != key_public:
+        fail("The TLS certificate and private key do not match")
+
+    account = subprocess.run(["getent", "passwd", "hysteria"], text=True,
+                             capture_output=True, check=False, timeout=10)
+    if account.returncode != 0:
+        fail("The Hysteria service account is not installed")
+    for path in (cert_path, key_path):
+        readable = subprocess.run([runuser, "-u", "hysteria", "--", "test", "-r", path],
+                                  text=True, capture_output=True, check=False, timeout=10)
+        if readable.returncode != 0:
+            fail("The Hysteria service account cannot read the selected TLS files")
+
+    readiness = hysteria_readiness(endpoint["domain"], str(port))
+    return {
+        "valid": True,
+        "domain": endpoint["domain"],
+        "udp_port": port,
+        "certificate_path": cert_path,
+        "private_key_path": key_path,
+        "certificate_domain_match": True,
+        "certificate_valid_for_at_least_24_hours": True,
+        "private_key_valid": True,
+        "certificate_key_match": True,
+        "service_user_can_read_files": True,
+        "dns_checked": readiness["dns_checked"],
+        "dns_resolves": readiness["dns_resolves"],
+        "dns_addresses": readiness["dns_addresses"],
+        "port_check_status": readiness["port_check_status"],
+        "port_available": readiness["ports_checked"] and not readiness["occupied_ports"],
+        "occupied_ports": readiness["occupied_ports"],
+        "configuration_written": False,
+        "service_changed": False,
+        "firewall_changed": False,
+    }
+
+
 XRAY_CLIENTS_FILE = "xray-clients.json"
 
 
