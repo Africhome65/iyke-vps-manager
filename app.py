@@ -393,6 +393,37 @@ def create_app(test_config=None):
             flash(str(exc), "error")
         return redirect(url_for("vpn_services"))
 
+    @app.post("/vpn/hysteria/preview")
+    @login_required
+    def preview_hysteria_single_port():
+        domain = request.form.get("domain", "")
+        port = request.form.get("port", "")
+        cert_path = request.form.get("cert_path", "")
+        key_path = request.form.get("key_path", "")
+        try:
+            result = json.loads(run_helper(
+                "hysteria_single_port_preview", timeout=90, domain=domain, port=port,
+                cert_path=cert_path, key_path=key_path
+            ) or "{}")
+            if (result.get("valid") is not True
+                    or result.get("configuration_written") is not False
+                    or result.get("service_changed") is not False
+                    or result.get("firewall_changed") is not False):
+                raise RuntimeError("Hysteria TLS preflight could not be verified")
+            audit("hysteria_tls_previewed", f"Read-only TLS preflight for {result['domain']} UDP/{result['udp_port']}")
+            dns = ", ".join(result.get("dns_addresses", [])) if result.get("dns_resolves") else "not resolved"
+            port_state = "available" if result.get("port_available") else "occupied or not verifiable"
+            flash(
+                f"TLS preflight passed for {result['domain']} on UDP/{result['udp_port']}. "
+                f"DNS: {dns}. UDP port: {port_state}. Certificate and key are valid, match, "
+                "and are readable by the Hysteria account. Nothing was written or started; "
+                "the firewall was not changed.",
+                "success" if result.get("port_available") and result.get("dns_resolves") else "warning",
+            )
+        except (RuntimeError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("vpn_services"))
+
     @app.post("/vpn/hysteria/install")
     @login_required
     def install_hysteria():
