@@ -2035,6 +2035,9 @@ def hysteria_configure_single_port(domain, port, cert_path, key_path):
         fail("Install the official Hysteria 2 binary before configuring a server")
     if not systemctl:
         fail("systemctl is unavailable")
+    systemd_analyze = shutil.which("systemd-analyze")
+    if not systemd_analyze:
+        fail("systemd-analyze is unavailable; cannot verify the new service unit")
     try:
         group = grp.getgrnam("hysteria")
     except KeyError:
@@ -2074,7 +2077,7 @@ def hysteria_configure_single_port(domain, port, cert_path, key_path):
         "NoNewPrivileges=true\n"
         "PrivateTmp=true\n"
         "ProtectSystem=full\n"
-        "ProtectHome=true\n"
+        "ProtectHome=read-only\n"
         "UMask=0027\n\n"
         "[Install]\n"
         "WantedBy=multi-user.target\n"
@@ -2086,6 +2089,12 @@ def hysteria_configure_single_port(domain, port, cert_path, key_path):
         config_written = True
         _hysteria_atomic_write(HYSTERIA_UNIT_PATH, unit_text, 0o644, 0)
         unit_written = True
+        verify_result = subprocess.run(
+            [systemd_analyze, "verify", HYSTERIA_UNIT_PATH], text=True,
+            capture_output=True, check=False, timeout=30,
+        )
+        if verify_result.returncode != 0:
+            raise RuntimeError("systemd rejected the dedicated Hysteria service unit")
         reload_result = subprocess.run(
             [systemctl, "daemon-reload"], text=True, capture_output=True,
             check=False, timeout=30,
