@@ -424,6 +424,57 @@ def create_app(test_config=None):
             flash(str(exc), "error")
         return redirect(url_for("vpn_services"))
 
+
+    @app.post("/vpn/hysteria/acme/preview")
+    @login_required
+    def preview_hysteria_http01():
+        domain = request.form.get("domain", "")
+        port = request.form.get("port", "")
+        try:
+            result = json.loads(run_helper(
+                "hysteria_http01_preview", timeout=90, domain=domain, port=port
+            ) or "{}")
+            if (result.get("valid") is not True or result.get("tcp80_available") is not True
+                    or result.get("firewall_changed") is not False):
+                raise RuntimeError("HTTP-01 readiness could not be verified")
+            audit("hysteria_http01_previewed",
+                  f"Read-only HTTP-01 preflight for {result['domain']} UDP/{result['udp_port']}")
+            flash(
+                "HTTP-01 preflight passed. UFW TCP/80 is already allowed."
+                if result.get("tcp80_allowed") else
+                "HTTP-01 preflight passed. You must separately approve the UFW TCP/80 rule before starting Hysteria.",
+                "success",
+            )
+        except (RuntimeError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("vpn_services"))
+
+    @app.post("/vpn/hysteria/acme/configure")
+    @login_required
+    def configure_hysteria_http01():
+        domain = request.form.get("domain", "")
+        port = request.form.get("port", "")
+        email = request.form.get("email", "")
+        try:
+            result = json.loads(run_helper(
+                "hysteria_http01_configure", timeout=180,
+                domain=domain, port=port, email=email,
+            ) or "{}")
+            if (result.get("configured") is not True or result.get("tls_mode") != "acme-http01"
+                    or result.get("service_state") != "not-started"
+                    or result.get("firewall_changed") is not False):
+                raise RuntimeError("Hysteria ACME configuration could not be verified")
+            audit("hysteria_http01_configured",
+                  f"Configured HTTP-01 for {result['domain']} UDP/{result['udp_port']}")
+            response = render_template("hysteria_setup.html", result=result)
+            return app.make_response((response, 200, {
+                "Cache-Control": "no-store, private, max-age=0",
+                "Pragma": "no-cache", "Referrer-Policy": "no-referrer",
+            }))
+        except (RuntimeError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            flash(str(exc), "error")
+            return redirect(url_for("vpn_services"))
+
     @app.post("/vpn/hysteria/configure")
     @login_required
     def configure_hysteria_single_port():
@@ -468,19 +519,43 @@ def create_app(test_config=None):
             if (result.get("started") is not True or result.get("enabled") is not True
                     or result.get("service_state") != "active"
                     or result.get("service_unit") != "iyke-hysteria.service"
+                    or result.get("tls_mode") not in {"manual", "acme-http01"}
                     or result.get("firewall_changed") is not False):
                 raise RuntimeError("Hysteria service activation could not be verified")
             audit("hysteria_service_started",
-                  f"Started dedicated Hysteria service on UDP/{result['udp_port']}; firewall unchanged")
+                  f"Started dedicated Hysteria service on UDP/{result['udp_port']} using {result['tls_mode']} TLS; firewall unchanged")
             flash(
-                f"Hysteria 2 is active and enabled on UDP/{result['udp_port']}. "
-                "The firewall has not been changed; client connections may still be blocked.",
+                f"Hysteria 2 is active and enabled on UDP/{result['udp_port']}."
+                + (" The HTTP-01 certificate was obtained or renewed successfully." if result["tls_mode"] == "acme-http01" else "")
+                + " The UDP firewall rule has not been changed.",
                 "success",
             )
         except (RuntimeError, json.JSONDecodeError, KeyError, TypeError) as exc:
             flash(str(exc), "error")
         return redirect(url_for("vpn_services"))
 
+
+
+    @app.post("/vpn/hysteria/acme/firewall/open")
+    @login_required
+    def open_hysteria_http01_firewall():
+        try:
+            result = json.loads(run_helper(
+                "hysteria_firewall_open_http01_tcp", timeout=90
+            ) or "{}")
+            if (result.get("opened") is not True or result.get("firewall") != "ufw"
+                    or result.get("tcp_port") != 80
+                    or not isinstance(result.get("firewall_changed"), bool)):
+                raise RuntimeError("The HTTP-01 TCP/80 firewall rule could not be verified")
+            audit("hysteria_http01_firewall_rule",
+                  "UFW TCP/80 " + ("rule added" if result["firewall_changed"] else "already allowed"))
+            flash("UFW already allows TCP/80 for HTTP-01 certificate issuance."
+                  if result.get("already_allowed") else
+                  "UFW now allows TCP/80 for HTTP-01 certificate issuance and renewals.",
+                  "success")
+        except (RuntimeError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("vpn_services"))
 
     @app.post("/vpn/hysteria/firewall/open")
     @login_required
