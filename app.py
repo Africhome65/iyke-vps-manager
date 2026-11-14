@@ -349,7 +349,7 @@ def create_app(test_config=None):
         if protocol not in {"vmess", "vless"}:
             abort(400)
         try:
-            result = json.loads(run_helper("xray_create_client", name=name, protocol=protocol) or "{}")
+            result = json.loads(run_helper("xray_create_client", timeout=150, name=name, protocol=protocol) or "{}")
             if result.get("created") is not True or result.get("name") != name or result.get("protocol") != protocol:
                 raise RuntimeError("Xray client creation could not be verified")
             audit("xray_client_created", f"Created Xray {protocol.upper()} client {name}")
@@ -407,7 +407,7 @@ def create_app(test_config=None):
         if not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name) or name in {"root", "server", "ca"}:
             abort(404)
         try:
-            result = json.loads(run_helper("xray_revoke_client", name=name) or "{}")
+            result = json.loads(run_helper("xray_revoke_client", timeout=150, name=name) or "{}")
             if result.get("revoked") is not True or result.get("name") != name:
                 raise RuntimeError("Xray client revocation could not be verified")
             audit("xray_client_revoked", f"Revoked Xray client {name}")
