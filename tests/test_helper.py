@@ -1116,7 +1116,8 @@ def test_openvpn_create_client_revokes_certificate_after_post_issue_validation_f
     script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     script.chmod(0o700)
     _pretend_root_owned(monkeypatch)
-    initial = "V\t301231235959Z\t\t01\tunknown\t/CN=phone01\n"
+    initial = ""
+    issued = "V\t301231235959Z\t\t01\tunknown\t/CN=phone01\n"
     revoked = "R\t301231235959Z\t261114000000Z\t01\tunknown\t/CN=phone01\n"
     index_state = {"value": initial}
     monkeypatch.setattr(helper, "_openvpn_unique_pki", lambda require_ca_key=False: (str(pki), initial))
@@ -1133,7 +1134,7 @@ def test_openvpn_create_client_revokes_certificate_after_post_issue_validation_f
         cert = pki / "issued" / "phone01.crt"
         cert.write_text("INVALID CLIENT CERTIFICATE", encoding="utf-8")
         cert.chmod(0o600)
-        index_state["value"] = initial
+        index_state["value"] = issued
         return helper.subprocess.CompletedProcess(args, 0, "", "")
 
     monkeypatch.setattr(helper.subprocess, "run", fake_issue)
