@@ -519,7 +519,7 @@ def test_openvpn_crl_state_rejects_server_ca_mismatch(tmp_path, monkeypatch):
     config.write_text("ca other-ca.crt\ncrl-verify pki/crl.pem\n", encoding="utf-8")
     config.chmod(0o600)
     for name in ("crl.pem", "ca.crt"):
-        (pki / name).write_text("public material\n", encoding="utf-8")
+        (pki / name).write_text("public material\\n", encoding="utf-8")
         (pki / name).chmod(0o600)
     _pretend_root_owned(monkeypatch)
     monkeypatch.setattr(helper, "_openvpn_pki_candidates", lambda: [str(pki)])
@@ -931,7 +931,7 @@ def test_hysteria_single_port_preview_checks_tls_and_is_read_only(monkeypatch, t
         if "-pubkey" in command or "-pubout" in command:
             return helper.subprocess.CompletedProcess(command, 0, "PUBLIC KEY", "")
         if command[0] == "/usr/bin/getent":
-            return helper.subprocess.CompletedProcess(command, 0, "203.0.113.5 STREAM example.com\n", "")
+            return helper.subprocess.CompletedProcess(command, 0, "203.0.113.5 STREAM example.com\\n", "")
         return helper.subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr(helper.shutil, "which", lambda name: {
@@ -1079,11 +1079,11 @@ def test_hysteria_readiness_reports_dns_and_udp_conflicts_read_only(monkeypatch)
         calls.append(command)
         if command[0] == "/usr/bin/getent":
             return helper.subprocess.CompletedProcess(
-                command, 0, "203.0.113.10 STREAM example.test\n", ""
+                command, 0, "203.0.113.10 STREAM example.test\\n", ""
             )
         return helper.subprocess.CompletedProcess(
             command, 0,
-            "UNCONN 0 0 127.0.0.53:53 0.0.0.0:*\n", ""
+            "UNCONN 0 0 127.0.0.53:53 0.0.0.0:*\\n", ""
         )
 
     monkeypatch.setattr(helper.shutil, "which",
@@ -1619,8 +1619,8 @@ def test_openvpn_unique_pki_rejects_ambiguity_even_if_only_one_has_ca_key(tmp_pa
 
 
 @pytest.mark.parametrize("pem_header", [
-    b"-----BEGIN ENCRYPTED PRIVATE KEY-----\n",
-    b"-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\n",
+    b"-----BEGIN ENCRYPTED PRIVATE KEY-----\\n",
+    b"-----BEGIN RSA PRIVATE KEY-----\\nProc-Type: 4,ENCRYPTED\\n",
 ])
 def test_openvpn_unique_pki_rejects_encrypted_ca_key(tmp_path, monkeypatch, capsys, pem_header):
     pki = tmp_path / "pki"
@@ -1631,7 +1631,7 @@ def test_openvpn_unique_pki_rejects_encrypted_ca_key(tmp_path, monkeypatch, caps
     (pki / "index.txt").write_text("", encoding="utf-8")
     (pki / "index.txt").chmod(0o600)
     ca_key = pki / "private" / "ca.key"
-    ca_key.write_bytes(pem_header + b"redacted-test-payload\n")
+    ca_key.write_bytes(pem_header + b"redacted-test-payload\\n")
     ca_key.chmod(0o600)
     _pretend_root_owned(monkeypatch)
     monkeypatch.setattr(helper, "_openvpn_pki_candidates", lambda: [str(pki)])
