@@ -81,7 +81,7 @@ The development server is not intended for production. Run automated checks with
 ## Roadmap
 
 1. Foundation, dashboard, secure authentication and SSH account operations
-2. Xray VLESS/VMess configuration, per-VPS domain/TLS or REALITY setup and client management; OpenVPN installation, certificate-based client creation/revocation and secure .ovpn downloads; WireGuard routing/NAT and firewall setup
+2. OpenVPN server installation and setup; WireGuard routing/NAT and firewall setup
 3. Domain and TLS lifecycle management
 4. Usage limits, backups, monitoring improvements and notifications
 5. Integration tests, hardening and deployment documentation
