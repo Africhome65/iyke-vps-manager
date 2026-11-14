@@ -1013,6 +1013,47 @@ def xray_list_clients():
                 for row in _load_xray_clients()]
 
 
+def _xray_config_has_client(protocol, client_id):
+    path = "/usr/local/etc/xray/config.json"
+    for directory in ("/usr", "/usr/local", "/usr/local/etc", "/usr/local/etc/xray"):
+        try:
+            info = os.lstat(directory)
+        except OSError:
+            return False
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0
+                or stat.S_IMODE(info.st_mode) & 0o022):
+            return False
+    fd = None
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_nlink != 1
+                or stat.S_IMODE(info.st_mode) & 0o022 or info.st_size > 1024 * 1024):
+            return False
+        with os.fdopen(fd, "r", encoding="utf-8") as source:
+            fd = None
+            config = json.load(source)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    finally:
+        if fd is not None:
+            os.close(fd)
+    if not isinstance(config, dict) or not isinstance(config.get("inbounds"), list):
+        return False
+    matches = []
+    for inbound in config["inbounds"]:
+        if not isinstance(inbound, dict) or inbound.get("protocol") != protocol:
+            continue
+        settings = inbound.get("settings")
+        clients = settings.get("clients") if isinstance(settings, dict) else None
+        if not isinstance(clients, list):
+            continue
+        for row in clients:
+            if isinstance(row, dict) and row.get("id") == client_id:
+                matches.append(inbound)
+    return len(matches) == 1
+
+
 def xray_get_client_profile(name):
     if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name):
         fail("Invalid Xray client name")
@@ -1021,6 +1062,8 @@ def xray_get_client_profile(name):
         client = next((row for row in rows if row["name"] == name), None)
         if client is None:
             fail("Xray client does not exist")
+        if not _xray_config_has_client(client["protocol"], client["id"]):
+            fail("This registry entry is not present in the live Xray configuration")
         summary = _xray_config_summary()
         hostname = _caddy_public_hostname()
         if summary["config_status"] != "readable" or not hostname:
