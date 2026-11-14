@@ -1174,6 +1174,36 @@ def test_openvpn_create_client_revokes_certificate_after_post_issue_validation_f
     assert easyrsa_calls == [["revoke", "phone01"], ["gen-crl"]]
 
 
+def test_openvpn_failed_issuance_repairs_crl_for_already_revoked_index(tmp_path, monkeypatch):
+    pki = tmp_path / "pki"
+    for name in ("issued", "private"):
+        (pki / name).mkdir(parents=True, mode=0o700)
+        (pki / name).chmod(0o700)
+    pki.chmod(0o700)
+    key = pki / "private" / "phone01.key"
+    key.write_text("PRIVATE KEY MATERIAL", encoding="utf-8")
+    key.chmod(0o600)
+    revoked = "R\\t301231235959Z\\t261114000000Z\\t01\\tunknown\\t/CN=phone01\\n"
+    monkeypatch.setattr(helper, "_read_openvpn_index", lambda path: revoked)
+    crl_state = {"contains": False}
+    monkeypatch.setattr(
+        helper, "_openvpn_crl_contains_serial",
+        lambda path, serial: crl_state["contains"]
+    )
+    easyrsa_calls = []
+
+    def fake_easyrsa(easyrsa, pki_path, arguments):
+        easyrsa_calls.append(arguments)
+        if arguments == ["gen-crl"]:
+            crl_state["contains"] = True
+
+    monkeypatch.setattr(helper, "_openvpn_run_easyrsa", fake_easyrsa)
+    helper._openvpn_cleanup_failed_issuance(str(pki), "phone01", "/usr/bin/easyrsa")
+    assert easyrsa_calls == [["gen-crl"]]
+    assert crl_state["contains"] is True
+    assert not key.exists()
+
+
 def test_openvpn_create_client_rejects_invalid_or_reserved_names(monkeypatch):
     monkeypatch.setattr(helper, "_openvpn_unique_pki",
                         lambda **kwargs: pytest.fail("PKI must not be inspected"))
