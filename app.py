@@ -367,7 +367,7 @@ def create_app(test_config=None):
             flash(str(exc), "error")
         return redirect(url_for("vpn_services"))
 
-    def xray_profile_uri(name):
+    def xray_profile_uris(name):
         if not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name) or name in {"root", "server", "ca"}:
             abort(404)
         try:
@@ -378,9 +378,16 @@ def create_app(test_config=None):
                     or not isinstance(data.get("path"), str) or data.get("port") != 443):
                 raise RuntimeError("Xray profile data could not be verified")
             builder = build_vmess_uri if data["protocol"] == "vmess" else build_vless_uri
-            return builder(data["id"], data["hostname"], data["path"], name, port=data["port"]), data["protocol"]
+            return [
+                (443, builder(data["id"], data["hostname"], data["path"], name, port=443)),
+                (80, builder(data["id"], data["hostname"], data["path"], name, port=80)),
+            ], data["protocol"]
         except (RuntimeError, json.JSONDecodeError, KeyError, TypeError, ValueError):
             abort(404, description="Xray client profile is unavailable")
+
+    def xray_profile_uri(name):
+        profiles, protocol = xray_profile_uris(name)
+        return profiles[0][1], protocol
 
     @app.get("/vpn/xray/clients/<name>/profile")
     @login_required
