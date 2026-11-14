@@ -2102,3 +2102,84 @@ def test_hysteria_udp_listener_check_requires_exact_port(monkeypatch):
     )
     assert helper._hysteria_udp_listener_present(8443) is True
     assert helper._hysteria_udp_listener_present(443) is False
+
+
+def _prepare_http01_firewall_test(tmp_path, monkeypatch):
+    config_path = tmp_path / "iyke.yaml"
+    config_path.write_text(json.dumps({
+        "listen": ":8443",
+        "acme": {"type": "http", "domains": ["vpn.example.com"]},
+    }), encoding="utf-8")
+    monkeypatch.setattr(helper, "HYSTERIA_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(helper.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(helper, "_hysteria_tcp_listener_check", lambda port: True)
+    monkeypatch.setattr(
+        helper.shutil, "which",
+        lambda name: "/usr/sbin/ufw" if name == "ufw" else None,
+    )
+    return config_path
+
+
+def test_hysteria_http01_firewall_refuses_existing_tcp80_deny(tmp_path, monkeypatch):
+    _prepare_http01_firewall_test(tmp_path, monkeypatch)
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        if command == ["/usr/sbin/ufw", "status"]:
+            return helper.subprocess.CompletedProcess(
+                command, 0, "Status: active\\n80/tcp DENY IN Anywhere\\n", ""
+            )
+        raise AssertionError(command)
+
+    monkeypatch.setattr(helper.subprocess, "run", fake_run)
+    with pytest.raises(SystemExit, match="deny/reject"):
+        helper.hysteria_firewall_open_http01_tcp()
+    assert calls == [["/usr/sbin/ufw", "status"]]
+
+
+def test_hysteria_http01_firewall_does_not_duplicate_existing_allow(tmp_path, monkeypatch):
+    _prepare_http01_firewall_test(tmp_path, monkeypatch)
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        if command == ["/usr/sbin/ufw", "status"]:
+            return helper.subprocess.CompletedProcess(
+                command, 0, "Status: active\\n80/tcp ALLOW IN Anywhere\\n", ""
+            )
+        raise AssertionError(command)
+
+    monkeypatch.setattr(helper.subprocess, "run", fake_run)
+    result = helper.hysteria_firewall_open_http01_tcp()
+    assert result == {
+        "opened": True, "already_allowed": True, "firewall_changed": False,
+        "firewall": "ufw", "tcp_port": 80,
+    }
+    assert calls == [["/usr/sbin/ufw", "status"]]
+
+
+def test_hysteria_http01_firewall_rolls_back_unverified_rule(tmp_path, monkeypatch):
+    _prepare_http01_firewall_test(tmp_path, monkeypatch)
+    calls = []
+    status_count = 0
+
+    def fake_run(command, **kwargs):
+        nonlocal status_count
+        calls.append(command)
+        if command == ["/usr/sbin/ufw", "status"]:
+            status_count += 1
+            return helper.subprocess.CompletedProcess(
+                command, 0, "Status: active\\n", ""
+            )
+        if command[:3] == ["/usr/sbin/ufw", "allow", "80/tcp"]:
+            return helper.subprocess.CompletedProcess(command, 0, "Rule added", "")
+        if command[:4] == ["/usr/sbin/ufw", "--force", "delete", "allow"]:
+            return helper.subprocess.CompletedProcess(command, 0, "Rule deleted", "")
+        raise AssertionError(command)
+
+    monkeypatch.setattr(helper.subprocess, "run", fake_run)
+    with pytest.raises(SystemExit, match="rolled back"):
+        helper.hysteria_firewall_open_http01_tcp()
+    assert status_count == 2
+    assert ["/usr/sbin/ufw", "--force", "delete", "allow", "80/tcp"] in calls
