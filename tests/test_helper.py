@@ -113,10 +113,10 @@ def test_list_accounts_parses_chage_aligned_colon(monkeypatch):
 
 def test_openvpn_index_parses_client_metadata_without_private_material():
     index = (
-        "V\\t301231235959Z\\t\\t01\\tunknown\\t/CN=phone01\\n"
-        "R\\t301231235959Z\\t261101120000Z\\t02\\tunknown\\t/CN=oldphone\\n"
-        "V\\tbad-date\\t\\t03\\tunknown\\t/CN=broken\\n"
-        "V\\t301231235959Z\\t\\t04\\tunknown\\t/CN=server\\n"
+        "V\t301231235959Z\t\t01\tunknown\t/CN=phone01\n"
+        "R\t301231235959Z\t261101120000Z\t02\tunknown\t/CN=oldphone\n"
+        "V\tbad-date\t\t03\tunknown\t/CN=broken\n"
+        "V\t301231235959Z\t\t04\tunknown\t/CN=server\n"
     )
     rows = helper._openvpn_index_clients(index)
     assert rows == [
@@ -136,7 +136,7 @@ def test_openvpn_clients_discovers_one_trusted_database(tmp_path, monkeypatch):
         (pki / name).chmod(0o700)
     pki.chmod(0o700)
     (pki / "index.txt").write_text(
-        "V\\t301231235959Z\\t\\t01\\tunknown\\t/CN=phone01\\n",
+        "V\t301231235959Z\t\t01\tunknown\t/CN=phone01\n",
         encoding="utf-8")
     (pki / "index.txt").chmod(0o600)
     monkeypatch.setattr(helper, "_openvpn_pki_candidates", lambda: [str(pki)])
