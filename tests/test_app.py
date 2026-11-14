@@ -257,3 +257,49 @@ def test_xray_install_route_requires_login_and_calls_helper(client, monkeypatch)
     request = __import__("json").loads(calls[0][1]["input"])
     assert request == {"action": "xray_install"}
     assert calls[0][1]["timeout"] == 330
+
+
+
+def test_xray_profile_download_requires_login_and_is_not_cached(client, monkeypatch):
+    assert client.get("/vpn/xray/clients/phone01/profile").status_code == 302
+    login(client)
+
+    def fake_run(args, **kwargs):
+        payload = __import__("json").loads(kwargs["input"])
+        assert payload == {"action": "xray_get_profile", "name": "phone01"}
+        return subprocess.CompletedProcess(args, 0, stdout=__import__("json").dumps({
+            "name": "phone01", "protocol": "vless",
+            "id": "12345678-1234-4234-8234-123456789abc",
+            "hostname": "vpn.example.net", "path": "/vless", "port": 443
+        }), stderr="")
+
+    monkeypatch.setattr("app.subprocess.run", fake_run)
+    response = client.get("/vpn/xray/clients/phone01/profile")
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store, private, max-age=0"
+    assert response.headers["Content-Disposition"] == 'attachment; filename="phone01-vless.txt"'
+    assert response.get_data(as_text=True).startswith("vless://12345678-1234-4234-8234-123456789abc@")
+
+
+def test_xray_profile_qr_requires_login(client, monkeypatch):
+    assert client.get("/vpn/xray/clients/phone01/qr").status_code == 302
+    login(client)
+
+    def fake_run(args, **kwargs):
+        return subprocess.CompletedProcess(args, 0, stdout=__import__("json").dumps({
+            "name": "phone01", "protocol": "vmess",
+            "id": "12345678-1234-4234-8234-123456789abc",
+            "hostname": "vpn.example.net", "path": "/vmess", "port": 443
+        }), stderr="")
+
+    monkeypatch.setattr("app.subprocess.run", fake_run)
+    response = client.get("/vpn/xray/clients/phone01/qr")
+    assert response.status_code == 200
+    assert response.mimetype == "image/svg+xml"
+    assert response.headers["Cache-Control"] == "no-store, private, max-age=0"
+
+
+def test_xray_profile_route_rejects_invalid_name_before_helper(client, monkeypatch):
+    login(client)
+    monkeypatch.setattr("app.subprocess.run", lambda *a, **k: pytest.fail("helper must not run"))
+    assert client.get("/vpn/xray/clients/../profile").status_code in {308, 404}
