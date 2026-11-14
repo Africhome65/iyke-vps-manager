@@ -305,6 +305,102 @@ def _openvpn_index_clients(index_text):
     return clients
 
 
+def _openvpn_unique_pki(require_ca_key=False):
+    """Return the sole protected Easy-RSA PKI, or fail closed."""
+    candidates = []
+    seen = set()
+    for path in _openvpn_pki_candidates():
+        normalized = os.path.normpath(path)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        if not (_safe_root_directory(normalized)
+                and _safe_root_directory(os.path.join(normalized, "issued"))
+                and _safe_root_directory(os.path.join(normalized, "private"))):
+            continue
+        index = _read_openvpn_index(os.path.join(normalized, "index.txt"))
+        if index is None:
+            continue
+        if require_ca_key:
+            ca_key_fd = _openvpn_trusted_file(os.path.join(normalized, "private", "ca.key"), 1024 * 1024)
+            if ca_key_fd is None:
+                continue
+            os.close(ca_key_fd)
+        candidates.append((normalized, index))
+    if len(candidates) != 1:
+        fail("No trusted Easy-RSA database found" if not candidates
+             else "More than one Easy-RSA database found; configure one explicitly")
+    return candidates[0]
+
+
+def _openvpn_easyrsa_path():
+    candidate = shutil.which("easyrsa")
+    if not candidate:
+        fail("Easy-RSA is not installed; client issuance is unavailable")
+    path = os.path.realpath(candidate)
+    if not _safe_root_directory(os.path.dirname(path)):
+        fail("Easy-RSA executable path is unsafe")
+    fd = _openvpn_trusted_file(path, 4 * 1024 * 1024)
+    if fd is None:
+        fail("Easy-RSA executable is unsafe")
+    try:
+        info = os.fstat(fd)
+        if not (info.st_mode & stat.S_IXUSR):
+            fail("Easy-RSA executable is not executable by root")
+    finally:
+        os.close(fd)
+    return path
+
+
+def openvpn_create_client(name):
+    """Issue a passwordless client keypair and certificate without returning its private key."""
+    if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name):
+        fail("Invalid OpenVPN client name")
+    if name in {"root", "server", "ca"}:
+        fail("That OpenVPN client name is reserved")
+    pki, index_text = _openvpn_unique_pki(require_ca_key=True)
+    if any(row["common_name"] == name for row in _openvpn_index_clients(index_text)):
+        fail("An OpenVPN certificate with that client name already exists")
+    cert_path = os.path.join(pki, "issued", name + ".crt")
+    key_path = os.path.join(pki, "private", name + ".key")
+    if os.path.lexists(cert_path) or os.path.lexists(key_path):
+        fail("Client certificate or key file already exists; refusing to overwrite")
+    easyrsa = _openvpn_easyrsa_path()
+    env = {
+        "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "EASYRSA_PKI": pki,
+        "EASYRSA_BATCH": "1",
+        "EASYRSA_REQ_CN": name,
+    }
+    try:
+        result = subprocess.run(
+            [easyrsa, "--batch", "build-client-full", name, "nopass"],
+            cwd=os.path.dirname(easyrsa), env=env, text=True,
+            capture_output=True, check=False, timeout=90,
+        )
+    except (OSError, subprocess.SubprocessError):
+        fail("Easy-RSA client issuance failed or timed out")
+    if result.returncode != 0:
+        fail("Easy-RSA client issuance failed")
+    cert_fd = _openvpn_trusted_file(cert_path, 1024 * 1024)
+    key_fd = _openvpn_trusted_file(key_path, 1024 * 1024)
+    if cert_fd is None or key_fd is None:
+        if cert_fd is not None:
+            os.close(cert_fd)
+        if key_fd is not None:
+            os.close(key_fd)
+        fail("Easy-RSA did not produce a safely stored client certificate and key")
+    os.close(cert_fd)
+    os.close(key_fd)
+    updated_index = _read_openvpn_index(os.path.join(pki, "index.txt"))
+    if updated_index is None or not any(
+        row["common_name"] == name and row["status"] == "valid"
+        for row in _openvpn_index_clients(updated_index)
+    ):
+        fail("Client issuance completed but the certificate index could not be verified")
+    return {"created": True, "name": name}
+
+
 def openvpn_clients():
     """Discover a trusted Easy-RSA PKI and return certificate index metadata only."""
     candidates = []
@@ -1054,6 +1150,11 @@ def handle_xray_action(request):
 
 def handle_vpn_action(request):
     action = request.get("action")
+    if action == "openvpn_create_client":
+        if set(request) != {"action", "name"}:
+            fail("Unexpected request fields")
+        print(json.dumps(openvpn_create_client(request["name"])))
+        return True
     if action == "wireguard_public_endpoint":
         if set(request) != {"action"}:
             fail("Unexpected request fields")
