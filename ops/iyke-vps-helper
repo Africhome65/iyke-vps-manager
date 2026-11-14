@@ -2222,12 +2222,15 @@ def hysteria_start_service():
         fail("Hysteria did not remain active; the dedicated unit was stopped")
     enabled_result = subprocess.run([systemctl, "enable", "iyke-hysteria.service"],
                                     text=True, capture_output=True, check=False, timeout=30)
-    if enabled_result.returncode != 0:
+    enabled_check = subprocess.run([systemctl, "is-enabled", "iyke-hysteria.service"],
+                                   text=True, capture_output=True, check=False, timeout=15)
+    if (enabled_result.returncode != 0 or enabled_check.returncode != 0
+            or enabled_check.stdout.strip() != "enabled"):
         subprocess.run([systemctl, "disable", "iyke-hysteria.service"],
                        text=True, capture_output=True, check=False, timeout=30)
         subprocess.run([systemctl, "stop", "iyke-hysteria.service"],
                        text=True, capture_output=True, check=False, timeout=30)
-        fail("Hysteria started but could not be enabled; the dedicated unit was stopped and disabled")
+        fail("Hysteria started but could not be enabled and verified; the dedicated unit was stopped and disabled")
     return {
         "started": True, "enabled": True, "service_state": "active",
         "service_unit": "iyke-hysteria.service", "firewall_changed": False,
