@@ -539,6 +539,37 @@ def test_xray_action_rejects_unexpected_fields():
         helper.handle_xray_action({"action": "xray_install", "domain": "example.com"})
 
 
+def test_openvpn_crl_state_rejects_symlinked_config_parent(tmp_path, monkeypatch):
+    real_parent = tmp_path / "real"
+    real_parent.mkdir()
+    config = real_parent / "server.conf"
+    config.write_text("crl-verify crl.pem\\n", encoding="utf-8")
+    config.chmod(0o600)
+    alias = tmp_path / "alias"
+    alias.symlink_to(real_parent, target_is_directory=True)
+    _pretend_root_owned(monkeypatch)
+    assert helper._openvpn_crl_state(str(alias / "server.conf")) == {
+        "crl_configured": False, "crl_file_present": False
+    }
+
+
+def test_openvpn_crl_state_rejects_symlinked_crl_parent(tmp_path, monkeypatch):
+    config = tmp_path / "server.conf"
+    config.write_text("crl-verify alias/crl.pem\\n", encoding="utf-8")
+    config.chmod(0o600)
+    real_parent = tmp_path / "real"
+    real_parent.mkdir()
+    crl = real_parent / "crl.pem"
+    crl.write_text("public CRL data\\n", encoding="utf-8")
+    crl.chmod(0o600)
+    alias = tmp_path / "alias"
+    alias.symlink_to(real_parent, target_is_directory=True)
+    _pretend_root_owned(monkeypatch)
+    assert helper._openvpn_crl_state(str(config)) == {
+        "crl_configured": True, "crl_file_present": False
+    }
+
+
 def test_openvpn_crl_state_rejects_symlink_config(tmp_path):
     target = tmp_path / "actual-server.conf"
     config = tmp_path / "server.conf"
