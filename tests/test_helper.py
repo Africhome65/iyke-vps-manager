@@ -1339,6 +1339,28 @@ def test_openvpn_unique_pki_rejects_ambiguity_even_if_only_one_has_ca_key(tmp_pa
     assert "More than one Easy-RSA database" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("pem_header", [
+    b"-----BEGIN ENCRYPTED PRIVATE KEY-----\\n",
+    b"-----BEGIN RSA PRIVATE KEY-----\\nProc-Type: 4,ENCRYPTED\\n",
+])
+def test_openvpn_unique_pki_rejects_encrypted_ca_key(tmp_path, monkeypatch, capsys, pem_header):
+    pki = tmp_path / "pki"
+    for name in ("issued", "private"):
+        (pki / name).mkdir(parents=True, mode=0o700)
+        (pki / name).chmod(0o700)
+    pki.chmod(0o700)
+    (pki / "index.txt").write_text("", encoding="utf-8")
+    (pki / "index.txt").chmod(0o600)
+    ca_key = pki / "private" / "ca.key"
+    ca_key.write_bytes(pem_header + b"redacted-test-payload\\n")
+    ca_key.chmod(0o600)
+    _pretend_root_owned(monkeypatch)
+    monkeypatch.setattr(helper, "_openvpn_pki_candidates", lambda: [str(pki)])
+    with pytest.raises(SystemExit):
+        helper._openvpn_unique_pki(require_ca_key=True)
+    assert "CA private key is encrypted" in capsys.readouterr().err
+
+
 def test_openvpn_unique_pki_rejects_group_readable_ca_key(tmp_path, monkeypatch, capsys):
     pki = tmp_path / "pki"
     for name in ("issued", "private"):
