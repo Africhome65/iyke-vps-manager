@@ -393,12 +393,12 @@ def create_app(test_config=None):
     @login_required
     def download_xray_profile(name):
         profiles, protocol = xray_profile_uris(name)
-        content = "\\n".join(
-            f"# {protocol.upper()} WebSocket port {port} ({'TLS' if port == 443 else 'plain HTTP'})\\n{uri}"
+        content = "\n".join(
+            f"# {protocol.upper()} WebSocket port {port} ({'TLS' if port == 443 else 'plain HTTP'})\n{uri}"
             for port, uri in profiles
-        ) + "\\n"
+        ) + "\n"
         response = Response(content, mimetype="text/plain; charset=utf-8")
-        response.headers["Content-Disposition"] = f'attachment; filename="{name}-{protocol}-80-443.txt'
+        response.headers["Content-Disposition"] = f'attachment; filename="{name}-{protocol}-80-443.txt"'
         response.headers["Cache-Control"] = "no-store, private, max-age=0"
         response.headers["Pragma"] = "no-cache"
         return response
