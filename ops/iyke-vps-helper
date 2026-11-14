@@ -2267,13 +2267,13 @@ def hysteria_firewall_open_udp():
         fail("The dedicated Hysteria UDP port is invalid")
     status = subprocess.run([ufw, "status"], text=True, capture_output=True,
                             check=False, timeout=30)
-    if status.returncode != 0 or not re.search(r"^Status:\\s+active\\s*$", status.stdout, re.I | re.M):
+    if status.returncode != 0 or not re.search(r"^Status:\s+active\s*$", status.stdout, re.I | re.M):
         fail("UFW is not verifiably active; no firewall change was made")
     allow_found = False
     deny_found = False
     for line in status.stdout.splitlines():
         match = re.match(
-            r"^\\s*(\\d+)(?::(\\d+))?(?:/(tcp|udp))?\\s+(ALLOW|DENY|REJECT)\\s+IN\\b",
+            r"^\s*(\d+)(?::(\d+))?(?:/(tcp|udp))?\s+(ALLOW|DENY|REJECT)\s+IN\b",
             line, re.I,
         )
         if not match:
@@ -2306,7 +2306,7 @@ def hysteria_firewall_open_udp():
     if verified.returncode == 0:
         for line in verified.stdout.splitlines():
             match = re.match(
-                r"^\\s*(\\d+)(?::(\\d+))?(?:/(tcp|udp))?\\s+(ALLOW|DENY|REJECT)\\s+IN\\b",
+                r"^\s*(\d+)(?::(\d+))?(?:/(tcp|udp))?\s+(ALLOW|DENY|REJECT)\s+IN\b",
                 line, re.I,
             )
             if not match:
