@@ -1242,6 +1242,7 @@ def test_openvpn_unique_pki_rejects_group_readable_ca_key(tmp_path, monkeypatch,
 
 def test_openvpn_get_profile_builds_inline_profile_only_for_verified_server(monkeypatch, tmp_path):
     monkeypatch.setattr(helper, "_openvpn_unique_pki", lambda: ("/etc/openvpn/easy-rsa/pki", ""))
+    monkeypatch.setattr(helper, "_openvpn_pki_lock", lambda pki: __import__("contextlib").nullcontext())
     monkeypatch.setattr(helper, "_openvpn_index_clients", lambda value: [{"common_name": "phone01", "status": "valid"}])
     monkeypatch.setattr(helper, "_openvpn_server_config_paths", lambda: ["/etc/openvpn/server/server.conf"])
     monkeypatch.setattr(helper, "_unit_state", lambda unit: "active")
@@ -1356,6 +1357,7 @@ def test_openvpn_get_profile_rejects_private_or_invalid_endpoint(monkeypatch):
 
 def test_openvpn_get_profile_requires_verified_active_server(monkeypatch):
     monkeypatch.setattr(helper, "_openvpn_unique_pki", lambda: ("/safe/pki", ""))
+    monkeypatch.setattr(helper, "_openvpn_pki_lock", lambda pki: __import__("contextlib").nullcontext())
     monkeypatch.setattr(helper, "_openvpn_index_clients", lambda value: [{"common_name": "phone01", "status": "valid"}])
     monkeypatch.setattr(helper, "_openvpn_server_config_paths", lambda: ["/etc/openvpn/server/server.conf"])
     monkeypatch.setattr(helper, "_unit_state", lambda unit: "active")
@@ -1382,6 +1384,7 @@ def test_openvpn_certificate_is_client_requires_client_auth_eku(monkeypatch, tmp
 
 def test_openvpn_profile_rejects_server_certificate_eku(monkeypatch):
     monkeypatch.setattr(helper, "_openvpn_unique_pki", lambda: ("/safe/pki", ""))
+    monkeypatch.setattr(helper, "_openvpn_pki_lock", lambda pki: __import__("contextlib").nullcontext())
     monkeypatch.setattr(helper, "_openvpn_index_clients", lambda value: [{"common_name": "phone01", "status": "valid"}])
     monkeypatch.setattr(helper, "_openvpn_server_config_paths", lambda: ["/etc/openvpn/server/server.conf"])
     monkeypatch.setattr(helper, "_unit_state", lambda unit: "active")
