@@ -1981,6 +1981,7 @@ def test_hysteria_start_verifies_active_and_enabled_dedicated_unit(tmp_path, mon
         ["is-active", "iyke-hysteria.service"],
         ["enable", "iyke-hysteria.service"],
         ["is-enabled", "iyke-hysteria.service"],
+        ["is-active", "iyke-hysteria.service"],
     ]
 
 
