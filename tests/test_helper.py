@@ -840,6 +840,28 @@ def test_openvpn_get_profile_builds_inline_profile_only_for_verified_server(monk
     assert "key-direction" not in result["profile"]
 
 
+@pytest.mark.parametrize(
+    ("serial", "crl_text", "expected"),
+    [
+        ("01", "Serial Number: 01\\n", True),
+        ("000A", "Serial Number: 0a\\n", True),
+        ("01", "Serial Number: 02\\n", False),
+        ("not-hex", "Serial Number: 01\\n", False),
+    ],
+)
+def test_openvpn_crl_contains_exact_revoked_serial(
+    tmp_path, monkeypatch, serial, crl_text, expected
+):
+    crl = tmp_path / "crl.pem"
+    crl.write_text("CRL", encoding="ascii")
+    monkeypatch.setattr(helper, "_openvpn_trusted_file",
+                        lambda path, max_bytes=4 * 1024 * 1024: os.open(crl, os.O_RDONLY))
+    monkeypatch.setattr(helper.shutil, "which", lambda name: "/usr/bin/openssl")
+    monkeypatch.setattr(helper.subprocess, "run", lambda args, **kwargs:
+        helper.subprocess.CompletedProcess(args, 0, crl_text, ""))
+    assert helper._openvpn_crl_contains_serial(str(crl), serial) is expected
+
+
 def test_openvpn_revoke_client_requires_client_eku_before_any_easyrsa_action(tmp_path, monkeypatch):
     pki = tmp_path / "pki"
     pki.mkdir(mode=0o700)
@@ -874,6 +896,7 @@ def test_openvpn_revoke_client_regenerates_verified_crl(tmp_path, monkeypatch):
     monkeypatch.setattr(helper, "_openvpn_crl_state", lambda path: {
         "crl_configured": True, "crl_file_present": True
     })
+    monkeypatch.setattr(helper, "_openvpn_crl_contains_serial", lambda path, serial: serial == "01")
     monkeypatch.setattr(helper, "_openvpn_config_directives", lambda path: {"cert": [["server.crt"]]})
     monkeypatch.setattr(helper, "_openvpn_read_pem", lambda path, label: "-----BEGIN X509 CRL-----\nCRL\n-----END X509 CRL-----\n")
     monkeypatch.setattr(helper, "_openvpn_easyrsa_path", lambda: "/usr/bin/easyrsa")
