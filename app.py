@@ -515,7 +515,7 @@ def create_app(test_config=None):
     @login_required
     def start_hysteria_service():
         try:
-            result = json.loads(run_helper("hysteria_start_service", timeout=150) or "{}")
+            result = json.loads(run_helper("hysteria_start_service", timeout=240) or "{}")
             if (result.get("started") is not True or result.get("enabled") is not True
                     or result.get("service_state") != "active"
                     or result.get("service_unit") != "iyke-hysteria.service"
