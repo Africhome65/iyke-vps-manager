@@ -1373,7 +1373,14 @@ def vpn_status():
     if xray_binary:
         xray.update(_xray_config_summary())
         xray["public_hostname"] = _caddy_public_hostname()
-    return {"wireguard": wireguard, "openvpn": openvpn, "xray": xray}
+    hysteria_binary = shutil.which("hysteria")
+    hysteria = {
+        "installed": hysteria_binary is not None,
+        "service": _unit_state("hysteria-server.service") if hysteria_binary else "not-installed",
+        "config_status": "present" if os.path.isfile("/etc/hysteria/config.yaml") else "missing",
+    }
+    return {"wireguard": wireguard, "openvpn": openvpn, "xray": xray,
+            "hysteria": hysteria}
 
 
 
@@ -1887,6 +1894,93 @@ def xray_install():
     }
 
 
+HYSTERIA_INSTALLER_COMMIT = "6b90c8c6bbe7c71ce849682ba9269acf44bc4abe"
+HYSTERIA_INSTALLER_URL = (
+    "https://raw.githubusercontent.com/HyNetworks/hysteria/"
+    + HYSTERIA_INSTALLER_COMMIT + "/scripts/install_server.sh"
+)
+
+
+def hysteria_install():
+    """Install official Hysteria 2 on a clean Ubuntu/Debian host without starting it."""
+    try:
+        with open("/etc/os-release", encoding="utf-8") as source:
+            os_release = source.read()
+    except OSError:
+        fail("Unable to identify this operating system")
+    os_id = next(
+        (line.split("=", 1)[1].strip().strip('"').strip("'")
+         for line in os_release.splitlines() if line.startswith("ID=")),
+        "",
+    )
+    if os_id not in {"ubuntu", "debian"}:
+        fail("Hysteria 2 installation supports Ubuntu and Debian only")
+
+    systemd_run = shutil.which("systemd-run")
+    if not systemd_run:
+        fail("systemd-run is unavailable; cannot safely install Hysteria 2 from the panel")
+
+    protected_paths = (
+        "/usr/local/bin/hysteria",
+        "/etc/systemd/system/hysteria-server.service",
+        "/etc/systemd/system/hysteria-server@.service",
+        "/etc/hysteria",
+        "/var/lib/hysteria",
+    )
+    if shutil.which("hysteria") or any(os.path.lexists(path) for path in protected_paths):
+        fail("A Hysteria installation or configuration already exists; refusing to overwrite it")
+
+    account = subprocess.run(
+        ["getent", "passwd", "hysteria"], text=True, capture_output=True,
+        check=False, timeout=10,
+    )
+    if account.returncode == 0:
+        fail("The hysteria system account already exists; refusing to reuse it")
+    if account.returncode != 2:
+        fail("Unable to check whether the hysteria system account already exists")
+
+    # Pin the official installer source to an immutable upstream commit. The
+    # upstream installer selects and downloads the current official Hysteria 2 release.
+    shell_script = (
+        "set -euo pipefail; "
+        "tmp=$(mktemp); trap 'rm -f \"$tmp\"' EXIT; "
+        "curl -fsSL --retry 3 --connect-timeout 15 --max-time 60 "
+        f"'{HYSTERIA_INSTALLER_URL}' -o \"$tmp\"; "
+        "HYSTERIA_USER=hysteria bash \"$tmp\""
+    )
+    unit = f"iyke-vps-manager-hysteria-install-{os.getpid()}-{os.urandom(4).hex()}"
+    command = [
+        systemd_run, "--quiet", "--wait", "--pipe", "--collect",
+        f"--unit={unit}", "--property=RuntimeMaxSec=300",
+        "--setenv=DEBIAN_FRONTEND=noninteractive",
+        "/bin/bash", "-c", shell_script,
+    ]
+    try:
+        subprocess.run(
+            command, text=True, capture_output=True, check=True, timeout=330
+        )
+    except subprocess.TimeoutExpired:
+        fail("Hysteria 2 installation timed out")
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "Hysteria 2 installation failed").strip()
+        fail(f"Hysteria 2 installation failed: {detail[-500:]}")
+
+    if not os.path.isfile("/usr/local/bin/hysteria") or not os.access("/usr/local/bin/hysteria", os.X_OK):
+        fail("Hysteria installer completed without installing the expected binary")
+    if not os.path.isfile("/etc/systemd/system/hysteria-server.service"):
+        fail("Hysteria installer completed without creating its system service")
+    if not os.path.isfile("/etc/hysteria/config.yaml"):
+        fail("Hysteria installer completed without creating its example configuration")
+    return {
+        "installed": True,
+        "service": _unit_state("hysteria-server.service"),
+        "config_status": "example",
+        "installer": "official-pinned",
+        "service_started": False,
+        "firewall_changed": False,
+    }
+
+
 XRAY_CLIENTS_FILE = "xray-clients.json"
 
 
@@ -2364,6 +2458,16 @@ def xray_revoke_client(name):
         return {"revoked": True, "name": name}
 
 
+def handle_hysteria_action(request):
+    action = request.get("action")
+    if action == "hysteria_install":
+        if set(request) != {"action"}:
+            fail("Unexpected request fields")
+        print(json.dumps(hysteria_install()))
+        return True
+    return False
+
+
 def handle_xray_action(request):
     action = request.get("action")
     if action == "xray_install":
@@ -2478,6 +2582,11 @@ def main():
         if handle_vpn_action(request):
             return
         fail("Unsupported OpenVPN action")
+
+    if action.startswith("hysteria_"):
+        if handle_hysteria_action(request):
+            return
+        fail("Unsupported Hysteria action")
 
     if action.startswith("xray_"):
         if handle_xray_action(request):
