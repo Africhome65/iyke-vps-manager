@@ -783,6 +783,7 @@ def xray_install():
 XRAY_CLIENTS_FILE = "xray-clients.json"
 
 
+@contextmanager
 def _xray_client_lock():
     check_state_dir()
     path = state_path("xray-clients.lock")
@@ -866,7 +867,7 @@ def _save_xray_clients(rows):
         with os.fdopen(fd, "w", encoding="utf-8") as target:
             fd = None
             json.dump(rows, target, separators=(",", ":"))
-            target.write("\\n")
+            target.write("\n")
             target.flush()
             os.fsync(target.fileno())
         os.replace(temporary, state_path(XRAY_CLIENTS_FILE))
