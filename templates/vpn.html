@@ -60,7 +60,7 @@
           <input id="ovpn-name" name="name" maxlength="31" pattern="[a-z][a-z0-9_-]{0,30}" required placeholder="phone01">
           <button type="submit">Issue certificate</button>
         </form>
-        <p class="muted">Creates a unique client certificate and private key in the protected Easy-RSA PKI. The private key is not shown or sent to the browser yet.</p>
+        <p class="muted">Creates a unique client certificate and private key in the protected Easy-RSA PKI. Downloaded .ovpn profiles contain that private key; store each profile securely and never share it.</p>
       {% endif %}
       <h3>Certificate inventory (read-only)</h3>
       {% if openvpn_inventory.available %}
