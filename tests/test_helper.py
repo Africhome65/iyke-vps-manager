@@ -1920,9 +1920,9 @@ def _prepare_hysteria_start_files(tmp_path, monkeypatch):
         "tls": {"cert": "/etc/ssl/fullchain.pem", "key": "/etc/ssl/privkey.pem"},
     }), encoding="utf-8")
     unit_path.write_text(
-        "[Unit]\\nDescription=Iyke VPS Manager Hysteria 2 server\\n"
-        "[Service]\\nUser=hysteria\\nGroup=hysteria\\n"
-        "ExecStart=/usr/local/bin/hysteria server --config /etc/hysteria/iyke.yaml\\n",
+        "[Unit]\nDescription=Iyke VPS Manager Hysteria 2 server\n"
+        "[Service]\nUser=hysteria\nGroup=hysteria\n"
+        "ExecStart=/usr/local/bin/hysteria server --config /etc/hysteria/iyke.yaml\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(helper, "HYSTERIA_CONFIG_PATH", str(config_path))
@@ -1959,11 +1959,11 @@ def test_hysteria_start_verifies_active_and_enabled_dedicated_unit(tmp_path, mon
         if command[-2:] == ["is-active", "iyke-hysteria.service"]:
             return helper.subprocess.CompletedProcess(
                 command, 0 if len([c for c in calls if c[-2:] == ["is-active", "iyke-hysteria.service"]]) > 1 else 3,
-                "active\\n" if len([c for c in calls if c[-2:] == ["is-active", "iyke-hysteria.service"]]) > 1 else "inactive\\n", "")
+                "active\n" if len([c for c in calls if c[-2:] == ["is-active", "iyke-hysteria.service"]]) > 1 else "inactive\n", "")
         if command[-2:] == ["is-enabled", "iyke-hysteria.service"]:
             return helper.subprocess.CompletedProcess(
                 command, 0 if len([c for c in calls if c[-2:] == ["is-enabled", "iyke-hysteria.service"]]) > 1 else 1,
-                "enabled\\n" if len([c for c in calls if c[-2:] == ["is-enabled", "iyke-hysteria.service"]]) > 1 else "disabled\\n", "")
+                "enabled\n" if len([c for c in calls if c[-2:] == ["is-enabled", "iyke-hysteria.service"]]) > 1 else "disabled\n", "")
         return helper.subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr(helper.subprocess, "run", fake_run)
