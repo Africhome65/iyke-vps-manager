@@ -463,7 +463,7 @@ def create_app(test_config=None):
             flash("Use a client name with lowercase letters, numbers, hyphens or underscores.", "error")
             return redirect(url_for("vpn_services"))
         try:
-            result = json.loads(run_helper("openvpn_create_client", timeout=120, name=name) or "{}")
+            result = json.loads(run_helper("openvpn_create_client", timeout=360, name=name) or "{}")
             if result.get("created") is not True or result.get("name") != name:
                 raise RuntimeError("OpenVPN client issuance could not be verified")
             audit("openvpn_client_created", f"Issued OpenVPN client certificate {name}")
