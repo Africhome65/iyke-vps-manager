@@ -1218,7 +1218,7 @@ def test_openvpn_failed_issuance_rejects_untrusted_crl_signature(tmp_path, monke
     key = pki / "private" / "phone01.key"
     key.write_text("PRIVATE KEY MATERIAL", encoding="utf-8")
     key.chmod(0o600)
-    revoked = "R\\t301231235959Z\\t261114000000Z\\t01\\tunknown\\t/CN=phone01\\n"
+    revoked = "R\t301231235959Z\t261114000000Z\t01\tunknown\t/CN=phone01\n"
     monkeypatch.setattr(helper, "_read_openvpn_index", lambda path: revoked)
     monkeypatch.setattr(helper, "_openvpn_crl_contains_serial", lambda path, serial: True)
     monkeypatch.setattr(helper, "_openvpn_crl_signed_by_ca", lambda path, pki_path: False)
