@@ -195,6 +195,45 @@ def test_wireguard_create_peer_route_validates_name(client, monkeypatch):
 
 
 
+def test_xray_client_routes_require_login_and_validate_protocol(client, monkeypatch):
+    assert client.post("/vpn/xray/clients", data={"name":"phone01","protocol":"vless"}).status_code == 302
+    login(client)
+    monkeypatch.setattr("app.subprocess.run", lambda *a, **k: pytest.fail("helper should not run for invalid protocol"))
+    assert client.post("/vpn/xray/clients", data={"name":"phone01","protocol":"trojan"}).status_code == 400
+
+
+def test_xray_client_create_route_calls_helper_and_does_not_flash_id(client, monkeypatch):
+    login(client)
+    calls = []
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(
+            args, 0,
+            stdout='{"created":true,"name":"phone01","protocol":"vmess","id":"12345678-1234-4234-8234-123456789abc"}',
+            stderr=""
+        )
+    monkeypatch.setattr("app.subprocess.run", fake_run)
+    response = client.post("/vpn/xray/clients", data={"name":"phone01","protocol":"vmess"}, follow_redirects=True)
+    assert response.status_code == 200
+    assert b"phone01" in response.data
+    assert b"12345678-1234-4234-8234-123456789abc" not in response.data
+    request = __import__("json").loads(calls[0][1]["input"])
+    assert request == {"action":"xray_create_client","name":"phone01","protocol":"vmess"}
+
+
+def test_xray_client_revoke_route_calls_helper(client, monkeypatch):
+    login(client)
+    calls = []
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args, 0, stdout='{"revoked":true,"name":"phone01"}', stderr="")
+    monkeypatch.setattr("app.subprocess.run", fake_run)
+    response = client.post("/vpn/xray/clients/phone01/revoke")
+    assert response.status_code == 302
+    request = __import__("json").loads(calls[0][1]["input"])
+    assert request == {"action":"xray_revoke_client","name":"phone01"}
+
+
 def test_xray_install_route_requires_login_and_calls_helper(client, monkeypatch):
     response = client.post("/vpn/xray/install")
     assert response.status_code == 302
