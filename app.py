@@ -320,9 +320,18 @@ def create_app(test_config=None):
                     peers = []
             except (RuntimeError, json.JSONDecodeError) as exc:
                 flash(str(exc), "error")
+        openvpn_inventory = {"available": False, "reason": "OpenVPN is not installed", "clients": []}
+        if status.get("openvpn", {}).get("installed"):
+            try:
+                openvpn_inventory = json.loads(run_helper("openvpn_clients") or "{}")
+                if not isinstance(openvpn_inventory, dict):
+                    openvpn_inventory = {"available": False, "reason": "Invalid inventory response", "clients": []}
+            except (RuntimeError, json.JSONDecodeError) as exc:
+                openvpn_inventory = {"available": False, "reason": str(exc), "clients": []}
         return render_template("vpn.html", vpn=status, peers=peers,
                                xray_clients=xray_clients,
-                               public_endpoint=public_endpoint)
+                               public_endpoint=public_endpoint,
+                               openvpn_inventory=openvpn_inventory)
 
 
 
@@ -412,6 +421,76 @@ def create_app(test_config=None):
                 raise RuntimeError("Xray client revocation could not be verified")
             audit("xray_client_revoked", f"Revoked Xray client {name}")
             flash(f"Xray client {name} revoked from the live configuration.", "success")
+        except (RuntimeError, json.JSONDecodeError) as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("vpn_services"))
+
+
+    @app.get("/vpn/openvpn/clients/<name>/profile")
+    @login_required
+    def download_openvpn_profile(name):
+        name = name.strip().lower()
+        endpoint = request.args.get("endpoint", "").strip()
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name) or name in {"root", "server", "ca"}:
+            abort(404)
+        if not endpoint or len(endpoint) > 253:
+            abort(400, "Provide this VPS public DNS name or IP address")
+        try:
+            result = json.loads(run_helper(
+                "openvpn_get_profile", timeout=30, name=name, endpoint=endpoint
+            ) or "{}")
+            profile = result.get("profile")
+            if result.get("name") != name or not isinstance(profile, str) or len(profile) > 4 * 1024 * 1024:
+                raise RuntimeError("OpenVPN profile could not be verified")
+            if not profile.startswith("client\ndev tun\n") or "<key>" not in profile:
+                raise RuntimeError("OpenVPN profile format could not be verified")
+            audit("openvpn_profile_downloaded", f"Downloaded OpenVPN profile for {name}")
+            response = Response(profile, mimetype="application/x-openvpn-profile")
+            response.headers["Content-Disposition"] = f'attachment; filename="{name}.ovpn"'
+            response.headers["Cache-Control"] = "no-store, private, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+            return response
+        except (RuntimeError, json.JSONDecodeError) as exc:
+            flash(str(exc), "error")
+            return redirect(url_for("vpn_services"))
+
+    @app.post("/vpn/openvpn/clients")
+    @login_required
+    def create_openvpn_client():
+        name = request.form.get("name", "").strip().lower()
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name) or name in {"root", "server", "ca"}:
+            flash("Use a client name with lowercase letters, numbers, hyphens or underscores.", "error")
+            return redirect(url_for("vpn_services"))
+        try:
+            result = json.loads(run_helper("openvpn_create_client", timeout=360, name=name) or "{}")
+            if result.get("created") is not True or result.get("name") != name:
+                raise RuntimeError("OpenVPN client issuance could not be verified")
+            audit("openvpn_client_created", f"Issued OpenVPN client certificate {name}")
+            flash(f"OpenVPN client certificate {name} was issued. Profile delivery is the next step.", "success")
+        except (RuntimeError, json.JSONDecodeError) as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("vpn_services"))
+
+    @app.post("/vpn/openvpn/clients/<name>/revoke")
+    @login_required
+    def revoke_openvpn_client(name):
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name) or name in {"root", "server", "ca"}:
+            abort(404)
+        try:
+            result = json.loads(run_helper(
+                "openvpn_revoke_client", timeout=240, name=name
+            ) or "{}")
+            if (result.get("name") != name or result.get("revoked") is not True
+                    or result.get("crl_regenerated") is not True
+                    or result.get("server_reload_performed") is not False):
+                raise RuntimeError("OpenVPN revocation could not be verified")
+            audit("openvpn_client_revoked", f"Revoked OpenVPN client certificate {name} and regenerated CRL")
+            flash(
+                f"OpenVPN client {name} revoked and CRL regenerated. The server was not restarted; "
+                "restart/reload may be required for immediate enforcement.",
+                "success"
+            )
         except (RuntimeError, json.JSONDecodeError) as exc:
             flash(str(exc), "error")
         return redirect(url_for("vpn_services"))

@@ -305,3 +305,84 @@ def test_xray_profile_route_rejects_invalid_name_before_helper(client, monkeypat
     login(client)
     monkeypatch.setattr("app.subprocess.run", lambda *a, **k: pytest.fail("helper must not run"))
     assert client.get("/vpn/xray/clients/../profile").status_code in {308, 404}
+
+
+def test_openvpn_client_issuance_route_requires_login_and_calls_helper(client, monkeypatch):
+    assert client.post("/vpn/openvpn/clients", data={"name": "phone01"}).status_code == 302
+    login(client)
+    calls = []
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(
+            args, 0, stdout='{"created":true,"name":"phone01"}', stderr=""
+        )
+    monkeypatch.setattr("app.subprocess.run", fake_run)
+    response = client.post("/vpn/openvpn/clients", data={"name": "phone01"})
+    assert response.status_code == 302
+    request = __import__("json").loads(calls[0][1]["input"])
+    assert request == {"action": "openvpn_create_client", "name": "phone01"}
+    assert calls[0][1]["timeout"] == 360
+
+
+def test_openvpn_client_issuance_route_rejects_invalid_name_before_helper(client, monkeypatch):
+    login(client)
+    monkeypatch.setattr("app.subprocess.run", lambda *a, **k: pytest.fail("helper should not run"))
+    response = client.post("/vpn/openvpn/clients", data={"name": "../bad"})
+    assert response.status_code == 302
+    with client.session_transaction() as session:
+        flashes = session.get("_flashes", [])
+    assert any("client name with lowercase" in message for _, message in flashes)
+
+
+
+
+
+def test_openvpn_revoke_client_route_requires_login_and_calls_helper(client, monkeypatch):
+    assert client.post("/vpn/openvpn/clients/phone01/revoke").status_code == 302
+    login(client)
+    calls = []
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(
+            args, 0,
+            stdout='{"name":"phone01","revoked":true,"crl_regenerated":true,"server_reload_performed":false}',
+            stderr=""
+        )
+    monkeypatch.setattr("app.subprocess.run", fake_run)
+    response = client.post("/vpn/openvpn/clients/phone01/revoke")
+    assert response.status_code == 302
+    request = __import__("json").loads(calls[0][1]["input"])
+    assert request == {"action": "openvpn_revoke_client", "name": "phone01"}
+    assert calls[0][1]["timeout"] == 240
+
+
+def test_openvpn_revoke_client_route_rejects_invalid_name(client, monkeypatch):
+    login(client)
+    monkeypatch.setattr("app.subprocess.run", lambda *a, **k: pytest.fail("helper should not run"))
+    assert client.post("/vpn/openvpn/clients/../revoke").status_code in {400, 404}
+
+
+def test_openvpn_profile_download_requires_login_and_is_not_cached(client, monkeypatch):
+    assert client.get("/vpn/openvpn/clients/phone01/profile?endpoint=vpn.example.com").status_code == 302
+    login(client)
+    calls = []
+    profile = "client\ndev tun\nremote vpn.example.com 1194\n<key>secret</key>\n"
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args, 0, stdout=__import__("json").dumps({"name":"phone01","profile":profile}), stderr="")
+    monkeypatch.setattr("app.subprocess.run", fake_run)
+    response = client.get("/vpn/openvpn/clients/phone01/profile?endpoint=vpn.example.com")
+    assert response.status_code == 200
+    assert response.data.decode() == profile
+    assert response.headers["Cache-Control"] == "no-store, private, max-age=0"
+    assert response.headers["Pragma"] == "no-cache"
+    assert response.headers["Content-Disposition"] == 'attachment; filename="phone01.ovpn"'
+    assert __import__("json").loads(calls[0][1]["input"]) == {
+        "action":"openvpn_get_profile","name":"phone01","endpoint":"vpn.example.com"
+    }
+
+
+def test_openvpn_profile_download_rejects_invalid_name(client, monkeypatch):
+    login(client)
+    monkeypatch.setattr("app.subprocess.run", lambda *a, **k: pytest.fail("helper should not run"))
+    assert client.get("/vpn/openvpn/clients/../profile?endpoint=vpn.example.com").status_code in {400, 404}

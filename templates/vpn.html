@@ -38,9 +38,51 @@
   <section class="panel">
     <div class="section-heading"><div><h2>OpenVPN</h2><p class="muted">Open-source SSL/TLS VPN</p></div><span class="vpn-state {{ 'available' if vpn.openvpn.installed else 'missing' }}">{{ 'Installed' if vpn.openvpn.installed else 'Not installed' }}</span></div>
     {% if vpn.openvpn.installed %}
-      {% if vpn.openvpn.instances %}<div class="vpn-list">{% for item in vpn.openvpn.instances %}<div class="vpn-instance"><b>{{ item.name }}</b><span class="vpn-state {{ 'available' if item.status == 'active' else 'missing' }}">{{ item.status|title }}</span></div>{% endfor %}</div>
+      {% if vpn.openvpn.instances %}<div class="vpn-list">{% for item in vpn.openvpn.instances %}<div class="vpn-instance"><div><b>{{ item.name }}</b><small class="muted">CRL: {{ 'signature and active process verified' if item.crl_runtime_verified else ('configured; runtime not verified' if item.crl_configured and item.crl_file_present else ('configured; missing, unsafe or unverified' if item.crl_configured else 'not configured')) }}</small></div><span class="vpn-state {{ 'available' if item.status == 'active' else 'missing' }}">{{ item.status|title }}</span></div>{% endfor %}</div>
       {% else %}<p class="empty">OpenVPN is installed, but no server configuration files were found.</p>{% endif %}
-    {% else %}<p class="muted">OpenVPN installation and client management will be added after the WireGuard workflow is tested.</p>{% endif %}
+      <hr>
+      {% if openvpn_inventory.available %}
+        <h3>OpenVPN client profiles</h3>
+        <p class="muted">Enter the public DNS name or public IP address clients will use to reach this VPS. Profiles are generated only when exactly one active server configuration is verified. Unsupported TLS modes are rejected rather than guessed.</p>
+        {% for cert in openvpn_inventory.clients %}
+          {% if cert.status == 'valid' and cert.common_name not in ['root', 'server', 'ca'] %}
+            <form method="get" action="{{ url_for('download_openvpn_profile', name=cert.common_name) }}" class="inline">
+              <label for="ovpn-endpoint-{{ loop.index }}">Endpoint for {{ cert.common_name }}</label>
+              <input id="ovpn-endpoint-{{ loop.index }}" name="endpoint" maxlength="253" required placeholder="vpn.example.com or public IP">
+              <button type="submit">Download .ovpn</button>
+            </form>
+          {% endif %}
+        {% endfor %}
+        <h3>Issue a client certificate</h3>
+        <form method="post" action="{{ url_for('create_openvpn_client') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <label for="ovpn-name">Client name</label>
+          <input id="ovpn-name" name="name" maxlength="31" pattern="[a-z][a-z0-9_-]{0,30}" required placeholder="phone01">
+          <button type="submit">Issue certificate</button>
+        </form>
+        <p class="muted">Creates a unique client certificate and private key in the protected Easy-RSA PKI. Downloaded .ovpn profiles contain that private key; store each profile securely and never share it.</p>
+      {% endif %}
+      <h3>Certificate inventory (read-only)</h3>
+      {% if openvpn_inventory.available %}
+        {% if openvpn_inventory.clients %}
+          <p class="muted">Easy-RSA certificate records. Server certificates are protected: the helper checks TLS client-authentication purpose before allowing revocation. The server is not restarted automatically after CRL regeneration.</p>
+          <div class="vpn-list">{% for cert in openvpn_inventory.clients %}
+            <div class="vpn-instance">
+              <div><b>{{ cert.common_name }}</b><small class="muted">Expires {{ cert.expires }} · Serial {{ cert.serial }}</small></div>
+              <div class="inline">
+                <span class="vpn-state {{ 'available' if cert.status == 'valid' else 'missing' }}">{{ cert.status|title }}</span>
+                {% if cert.status == 'valid' and cert.common_name not in ['root', 'server', 'ca'] %}
+                  <form method="post" action="{{ url_for('revoke_openvpn_client', name=cert.common_name) }}" class="inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button class="secondary" type="submit">Revoke</button>
+                  </form>
+                {% endif %}
+              </div>
+            </div>
+          {% endfor %}</div>
+        {% else %}<p class="empty">The Easy-RSA database was found, but it contains no readable certificate records.</p>{% endif %}
+      {% else %}<p class="muted">{{ openvpn_inventory.reason }}. Inventory is unavailable; no changes have been made.</p>{% endif %}
+    {% else %}<p class="muted">OpenVPN client management is being developed. The panel currently reports service, CRL and read-only certificate inventory status.</p>{% endif %}
   </section>
   <section class="panel">
     <div class="section-heading"><div><h2>Xray-core</h2><p class="muted">Engine for VLESS and VMess</p></div><span class="vpn-state {{ 'available' if vpn.xray.installed else 'missing' }}">{{ 'Installed' if vpn.xray.installed else 'Not installed' }}</span></div>
