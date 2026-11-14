@@ -110,6 +110,76 @@ def test_list_accounts_parses_chage_aligned_colon(monkeypatch):
 
 
 
+
+def test_openvpn_index_parses_client_metadata_without_private_material():
+    index = (
+        "V\\t301231235959Z\\t\\t01\\tunknown\\t/CN=phone01\\n"
+        "R\\t301231235959Z\\t261101120000Z\\t02\\tunknown\\t/CN=oldphone\\n"
+        "V\\tbad-date\\t\\t03\\tunknown\\t/CN=broken\\n"
+        "V\\t301231235959Z\\t\\t04\\tunknown\\t/CN=server\\n"
+    )
+    rows = helper._openvpn_index_clients(index)
+    assert rows == [
+        {"common_name": "oldphone", "status": "revoked",
+         "expires": "2030-12-31", "serial": "02"},
+        {"common_name": "phone01", "status": "valid",
+         "expires": "2030-12-31", "serial": "01"},
+        {"common_name": "server", "status": "valid",
+         "expires": "2030-12-31", "serial": "04"},
+    ]
+
+
+def test_openvpn_clients_discovers_one_trusted_database(tmp_path, monkeypatch):
+    pki = tmp_path / "pki"
+    for name in ("issued", "private"):
+        (pki / name).mkdir(parents=True, mode=0o700)
+        (pki / name).chmod(0o700)
+    pki.chmod(0o700)
+    (pki / "index.txt").write_text(
+        "V\\t301231235959Z\\t\\t01\\tunknown\\t/CN=phone01\\n",
+        encoding="utf-8")
+    (pki / "index.txt").chmod(0o600)
+    monkeypatch.setattr(helper, "_openvpn_pki_candidates", lambda: [str(pki)])
+    result = helper.openvpn_clients()
+    assert result == {
+        "available": True, "reason": "",
+        "clients": [{"common_name": "phone01", "status": "valid",
+                     "expires": "2030-12-31", "serial": "01"}],
+    }
+
+
+def test_openvpn_clients_rejects_symlink_index(tmp_path, monkeypatch):
+    pki = tmp_path / "pki"
+    for name in ("issued", "private"):
+        (pki / name).mkdir(parents=True, mode=0o700)
+        (pki / name).chmod(0o700)
+    pki.chmod(0o700)
+    outside = tmp_path / "outside-index"
+    outside.write_text("", encoding="utf-8")
+    outside.chmod(0o600)
+    (pki / "index.txt").symlink_to(outside)
+    monkeypatch.setattr(helper, "_openvpn_pki_candidates", lambda: [str(pki)])
+    assert helper.openvpn_clients()["available"] is False
+
+
+def test_openvpn_clients_requires_unambiguous_database(tmp_path, monkeypatch):
+    paths = []
+    for number in ("one", "two"):
+        pki = tmp_path / number
+        for name in ("issued", "private"):
+            (pki / name).mkdir(parents=True, mode=0o700)
+            (pki / name).chmod(0o700)
+        pki.chmod(0o700)
+        (pki / "index.txt").write_text("", encoding="utf-8")
+        (pki / "index.txt").chmod(0o600)
+        paths.append(str(pki))
+    monkeypatch.setattr(helper, "_openvpn_pki_candidates", lambda: paths)
+    result = helper.openvpn_clients()
+    assert result["available"] is False
+    assert result["clients"] == []
+    assert "More than one" in result["reason"]
+
+
 def test_vpn_status_reports_missing_software(monkeypatch):
     monkeypatch.setattr(helper.shutil, "which", lambda command: None)
     assert helper.vpn_status() == {
