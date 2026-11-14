@@ -157,6 +157,15 @@
         <input id="hysteria-apply-key-path" name="key_path" maxlength="4096" required placeholder="/etc/letsencrypt/live/vpn.example.com/privkey.pem">
         <button type="submit">Confirm and create disabled configuration</button>
       </form>
+      {% if vpn.hysteria.config_status == 'configured' and vpn.hysteria.service != 'active' %}
+      <hr>
+      <h3>Start the configured Hysteria service (explicit confirmation)</h3>
+      <p class="muted">This verifies the dedicated configuration and service unit, then starts and enables only iyke-hysteria.service. It does not open or change firewall rules. Client connections may remain blocked until you separately approve a UDP firewall rule.</p>
+      <form method="post" action="{{ url_for('start_hysteria_service') }}" onsubmit="return confirm('Start and enable only iyke-hysteria.service? No firewall rules will be changed.');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit">Confirm and start Hysteria 2</button>
+      </form>
+      {% endif %}
       <hr>
       <h3>Single-port TLS preflight (read-only)</h3>
       <p class="muted">Check one UDP port and an existing certificate/private-key pair. The files must match the domain and be readable by the Hysteria service account. This preview does not create configuration, start services or change firewall rules.</p>
