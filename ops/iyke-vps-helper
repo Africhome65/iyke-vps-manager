@@ -965,6 +965,187 @@ def xray_list_clients():
                 for row in _load_xray_clients()]
 
 
+
+XRAY_CONFIG_PATH = "/usr/local/etc/xray/config.json"
+
+
+def _xray_read_mutable_config():
+    """Read the active config only when every path component is safe."""
+    for directory in ("/usr", "/usr/local", "/usr/local/etc", "/usr/local/etc/xray"):
+        try:
+            info = os.lstat(directory)
+        except OSError:
+            fail("Xray configuration directory is unavailable")
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0
+                or stat.S_IMODE(info.st_mode) & 0o022):
+            fail("Xray configuration directory has unsafe ownership or permissions")
+    fd = None
+    try:
+        fd = os.open(XRAY_CONFIG_PATH, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_nlink != 1
+                or stat.S_IMODE(info.st_mode) & 0o022 or info.st_size > 1024 * 1024):
+            fail("Xray configuration file has unsafe ownership or permissions")
+        with os.fdopen(fd, "rb") as source:
+            fd = None
+            raw = source.read(1024 * 1024 + 1)
+        if len(raw) > 1024 * 1024:
+            fail("Xray configuration exceeds the safe size limit")
+        config = json.loads(raw.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        fail("Xray configuration is unreadable or invalid")
+    finally:
+        if fd is not None:
+            os.close(fd)
+    if not isinstance(config, dict) or not isinstance(config.get("inbounds"), list):
+        fail("Xray configuration has an invalid inbound structure")
+    return config, raw, stat.S_IMODE(info.st_mode)
+
+
+def _xray_client_inbound(config, protocol):
+    matches = []
+    for inbound in config["inbounds"]:
+        if not isinstance(inbound, dict) or inbound.get("protocol") != protocol:
+            continue
+        stream = inbound.get("streamSettings", {})
+        settings = inbound.get("settings", {})
+        if (not isinstance(stream, dict) or stream.get("network") != "ws"
+                or not isinstance(settings, dict) or not isinstance(settings.get("clients"), list)):
+            continue
+        ws = stream.get("wsSettings", {})
+        if not isinstance(ws, dict) or not isinstance(ws.get("path"), str):
+            continue
+        if not ws["path"].startswith("/") or len(ws["path"]) > 128:
+            continue
+        port = inbound.get("port")
+        if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+            continue
+        matches.append(inbound)
+    if len(matches) != 1:
+        fail(f"Expected exactly one compatible WebSocket {protocol.upper()} inbound; refusing to guess")
+    return matches[0]
+
+
+def _xray_atomic_restore(raw, mode):
+    directory = os.path.dirname(XRAY_CONFIG_PATH)
+    fd = None
+    temporary = None
+    try:
+        fd, temporary = tempfile.mkstemp(prefix=".iyke-xray-rollback-", dir=directory)
+        os.fchmod(fd, mode)
+        os.fchown(fd, 0, 0)
+        with os.fdopen(fd, "wb") as target:
+            fd = None
+            target.write(raw)
+            target.flush()
+            os.fsync(target.fileno())
+        os.replace(temporary, XRAY_CONFIG_PATH)
+        temporary = None
+    except OSError:
+        fail("CRITICAL: unable to restore the previous Xray configuration")
+    finally:
+        if fd is not None:
+            os.close(fd)
+        if temporary is not None:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+
+
+def _xray_apply_config(config, original_raw, original_mode):
+    """Back up, validate, atomically install and restart; restore on any failure."""
+    check_state_dir()
+    backup = state_path("xray-config-backup-" + datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+                        + "-" + os.urandom(4).hex() + ".json")
+    try:
+        fd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as target:
+            target.write(original_raw)
+            target.flush()
+            os.fsync(target.fileno())
+    except OSError:
+        fail("Unable to create a protected Xray configuration backup")
+
+    directory = os.path.dirname(XRAY_CONFIG_PATH)
+    fd = None
+    temporary = None
+    try:
+        fd, temporary = tempfile.mkstemp(prefix=".iyke-xray-new-", dir=directory)
+        os.fchmod(fd, original_mode)
+        os.fchown(fd, 0, 0)
+        with os.fdopen(fd, "w", encoding="utf-8") as target:
+            fd = None
+            json.dump(config, target, indent=2, ensure_ascii=False)
+            target.write("\n")
+            target.flush()
+            os.fsync(target.fileno())
+        xray = shutil.which("xray") or "/usr/local/bin/xray"
+        check = subprocess.run([xray, "run", "-test", "-config", temporary],
+                               text=True, capture_output=True, check=False, timeout=30)
+        if check.returncode:
+            fail("Xray rejected the proposed configuration; the active config was not changed")
+        os.replace(temporary, XRAY_CONFIG_PATH)
+        temporary = None
+        try:
+            subprocess.run(["systemctl", "restart", "xray.service"], text=True,
+                           capture_output=True, check=True, timeout=45)
+            if _unit_state("xray.service") != "active":
+                raise RuntimeError("Xray did not return to active state")
+        except (OSError, subprocess.SubprocessError, RuntimeError):
+            _xray_atomic_restore(original_raw, original_mode)
+            try:
+                subprocess.run(["systemctl", "restart", "xray.service"], text=True,
+                               capture_output=True, check=True, timeout=45)
+            except (OSError, subprocess.SubprocessError):
+                fail("Xray restart failed and the original config was restored; service recovery is required")
+            fail("Xray restart failed; the original configuration was restored")
+    except subprocess.TimeoutExpired:
+        fail("Xray configuration validation or restart timed out")
+    except OSError:
+        fail("Unable to safely apply the Xray configuration")
+    finally:
+        if fd is not None:
+            os.close(fd)
+        if temporary is not None:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+
+
+def _xray_sync_add(protocol, client_id, name):
+    config, raw, mode = _xray_read_mutable_config()
+    inbound = _xray_client_inbound(config, protocol)
+    clients = inbound["settings"]["clients"]
+    for client in clients:
+        if not isinstance(client, dict):
+            fail("Xray inbound contains an invalid client entry")
+        existing_id = client.get("id")
+        if existing_id == client_id:
+            fail("Generated Xray client ID already exists; refusing duplicate")
+    if protocol == "vmess":
+        clients.append({"id": client_id, "alterId": 0, "email": "iyke:" + name})
+    else:
+        clients.append({"id": client_id, "email": "iyke:" + name})
+    _xray_apply_config(config, raw, mode)
+
+
+def _xray_sync_remove(protocol, client_id):
+    config, raw, mode = _xray_read_mutable_config()
+    inbound = _xray_client_inbound(config, protocol)
+    clients = inbound["settings"]["clients"]
+    matches = [client for client in clients
+               if isinstance(client, dict) and client.get("id") == client_id]
+    if len(matches) != 1:
+        fail("Managed Xray client is not present exactly once in its inbound; refusing removal")
+    inbound["settings"]["clients"] = [
+        client for client in clients
+        if not (isinstance(client, dict) and client.get("id") == client_id)
+    ]
+    _xray_apply_config(config, raw, mode)
+
+
 def xray_create_client(name, protocol):
     if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name):
         fail("Invalid Xray client name")
@@ -981,8 +1162,13 @@ def xray_create_client(name, protocol):
         if len(rows) >= 1000:
             fail("The Xray client limit has been reached")
         client_id = str(uuid.uuid4())
+        _xray_sync_add(protocol, client_id, name)
         rows.append({"name": name, "protocol": protocol, "id": client_id})
-        _save_xray_clients(rows)
+        try:
+            _save_xray_clients(rows)
+        except SystemExit:
+            _xray_sync_remove(protocol, client_id)
+            raise
     return {"created": True, "name": name, "protocol": protocol, "id": client_id}
 
 
@@ -991,10 +1177,19 @@ def xray_revoke_client(name):
         fail("Invalid Xray client name")
     with xray_client_lock():
         rows = _load_xray_clients()
-        updated = [row for row in rows if row["name"] != name]
-        if len(updated) == len(rows):
+        matches = [row for row in rows if row["name"] == name]
+        if not matches:
             fail("Xray client was not found")
-        _save_xray_clients(updated)
+        if len(matches) != 1:
+            fail("Xray client registry contains duplicate names")
+        row = matches[0]
+        _xray_sync_remove(row["protocol"], row["id"])
+        updated = [item for item in rows if item["name"] != name]
+        try:
+            _save_xray_clients(updated)
+        except SystemExit:
+            _xray_sync_add(row["protocol"], row["id"], row["name"])
+            raise
     return {"revoked": True, "name": name}
 
 
