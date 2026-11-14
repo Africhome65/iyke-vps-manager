@@ -241,6 +241,6 @@ def test_openvpn_client_issuance_route_rejects_invalid_name_before_helper(client
     assert response.status_code == 302
     with client.session_transaction() as session:
         flashes = session.get("_flashes", [])
-    assert any("OpenVPN client name" in message for _, message in flashes)
+    assert any("client name with lowercase" in message for _, message in flashes)
 
 
