@@ -350,6 +350,33 @@ def create_app(test_config=None):
             flash(str(exc), "error")
         return redirect(url_for("vpn_services"))
 
+    @app.post("/vpn/hysteria/validate")
+    @login_required
+    def validate_hysteria():
+        domain = request.form.get("domain", "")
+        ports = request.form.get("ports", "")
+        try:
+            result = json.loads(run_helper(
+                "hysteria_validate", domain=domain, ports=ports
+            ) or "{}")
+            if result.get("valid") is not True or result.get("service_changed") is not False:
+                raise RuntimeError("Hysteria configuration validation could not be verified")
+            audit(
+                "hysteria_config_validated",
+                f"Validated domain {result['domain']} and UDP ports "
+                + ", ".join(str(port) for port in result["udp_ports"]),
+            )
+            flash(
+                "Input check passed for " + result["domain"] + " on UDP "
+                + ", ".join(str(port) for port in result["udp_ports"])
+                + ". DNS, port availability and TLS have not been checked; "
+                  "nothing was applied.",
+                "success",
+            )
+        except (RuntimeError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("vpn_services"))
+
     @app.post("/vpn/hysteria/install")
     @login_required
     def install_hysteria():
