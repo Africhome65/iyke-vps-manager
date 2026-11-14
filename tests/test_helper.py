@@ -755,6 +755,7 @@ def test_openvpn_create_client_refuses_existing_name_and_files(monkeypatch):
 
 def test_openvpn_create_client_rejects_failed_easyrsa(monkeypatch, capsys):
     monkeypatch.setattr(helper, "_openvpn_unique_pki", lambda require_ca_key=False: ("/safe/pki", ""))
+    monkeypatch.setattr(helper, "_openvpn_pki_lock", lambda pki: __import__("contextlib").nullcontext())
     monkeypatch.setattr(helper, "_openvpn_easyrsa_path", lambda: "/usr/share/easy-rsa/easyrsa")
     monkeypatch.setattr(helper.subprocess, "run", lambda args, **kwargs:
         helper.subprocess.CompletedProcess(args, 1, "", "sensitive output"))
