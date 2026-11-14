@@ -243,7 +243,7 @@ def test_vpn_status_reports_missing_software(monkeypatch):
         "xray": {"installed": False, "service": "not-installed",
                  "config_status": "unavailable", "inbounds": [], "public_hostname": ""},
         "hysteria": {"installed": False, "service": "not-installed",
-                     "config_status": "missing"},
+                     "service_unit": "", "config_status": "missing"},
     }
 
 
