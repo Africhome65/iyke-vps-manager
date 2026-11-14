@@ -377,7 +377,7 @@ def create_app(test_config=None):
     @login_required
     def download_xray_profile(name):
         profile, protocol = xray_profile_uri(name)
-        response = Response(profile + "\\n", mimetype="text/plain; charset=utf-8")
+        response = Response(profile + "\n", mimetype="text/plain; charset=utf-8")
         response.headers["Content-Disposition"] = f'attachment; filename="{name}-{protocol}.txt"'
         response.headers["Cache-Control"] = "no-store, private, max-age=0"
         response.headers["Pragma"] = "no-cache"
