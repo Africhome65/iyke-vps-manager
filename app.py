@@ -379,6 +379,29 @@ def create_app(test_config=None):
             flash(str(exc), "error")
         return redirect(url_for("vpn_services"))
 
+    @app.post("/vpn/openvpn/clients/<name>/revoke")
+    @login_required
+    def revoke_openvpn_client(name):
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name) or name in {"root", "server", "ca"}:
+            abort(404)
+        try:
+            result = json.loads(run_helper(
+                "openvpn_revoke_client", timeout=240, name=name
+            ) or "{}")
+            if (result.get("name") != name or result.get("revoked") is not True
+                    or result.get("crl_regenerated") is not True
+                    or result.get("server_reload_performed") is not False):
+                raise RuntimeError("OpenVPN revocation could not be verified")
+            audit("openvpn_client_revoked", f"Revoked OpenVPN client certificate {name} and regenerated CRL")
+            flash(
+                f"OpenVPN client {name} revoked and CRL regenerated. The server was not restarted; "
+                "restart/reload may be required for immediate enforcement.",
+                "success"
+            )
+        except (RuntimeError, json.JSONDecodeError) as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("vpn_services"))
+
     @app.post("/vpn/wireguard/install")
     @login_required
     def install_wireguard():
