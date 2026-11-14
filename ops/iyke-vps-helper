@@ -221,6 +221,71 @@ def _unit_state(unit):
                               "deactivating", "reloading"} else "unknown"
 
 
+def _xray_config_summary():
+    """Read only non-secret inbound metadata from the existing Xray config."""
+    path = "/usr/local/etc/xray/config.json"
+    for directory in ("/usr", "/usr/local", "/usr/local/etc", "/usr/local/etc/xray"):
+        try:
+            info = os.lstat(directory)
+        except OSError:
+            return {"config_status": "unavailable", "inbounds": []}
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0
+                or stat.S_IMODE(info.st_mode) & 0o022):
+            return {"config_status": "unsafe", "inbounds": []}
+    fd = None
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
+                or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) & 0o022
+                or info.st_size > 1024 * 1024):
+            return {"config_status": "unsafe", "inbounds": []}
+        with os.fdopen(fd, "r", encoding="utf-8") as source:
+            fd = None
+            config = json.load(source)
+    except FileNotFoundError:
+        return {"config_status": "unavailable", "inbounds": []}
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {"config_status": "invalid", "inbounds": []}
+    finally:
+        if fd is not None:
+            os.close(fd)
+    if not isinstance(config, dict) or not isinstance(config.get("inbounds", []), list):
+        return {"config_status": "invalid", "inbounds": []}
+
+    inbounds = []
+    for inbound in config.get("inbounds", []):
+        if not isinstance(inbound, dict):
+            return {"config_status": "invalid", "inbounds": []}
+        protocol = inbound.get("protocol", "")
+        port = inbound.get("port")
+        listen = inbound.get("listen", "0.0.0.0")
+        if (not isinstance(protocol, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,31}", protocol)
+                or isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535
+                or not isinstance(listen, str) or len(listen) > 255
+                or any(ord(ch) < 32 for ch in listen)):
+            return {"config_status": "invalid", "inbounds": []}
+        stream = inbound.get("streamSettings", {})
+        if not isinstance(stream, dict):
+            return {"config_status": "invalid", "inbounds": []}
+        network = stream.get("network", "tcp")
+        security = stream.get("security", "none")
+        if (not isinstance(network, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,15}", network)
+                or not isinstance(security, str)
+                or not re.fullmatch(r"[a-z][a-z0-9-]{0,15}", security)):
+            return {"config_status": "invalid", "inbounds": []}
+        row = {"protocol": protocol, "listen": listen, "port": port,
+               "network": network, "security": security}
+        ws = stream.get("wsSettings", {})
+        if isinstance(ws, dict):
+            ws_path = ws.get("path")
+            if isinstance(ws_path, str) and len(ws_path) <= 128 and ws_path.startswith("/") and not any(
+                    ord(ch) < 32 for ch in ws_path):
+                row["path"] = ws_path
+        inbounds.append(row)
+    return {"config_status": "readable", "inbounds": inbounds}
+
+
 def vpn_status():
     """Return service metadata only; never expose private keys or config contents."""
     wireguard_installed = shutil.which("wg") is not None
@@ -265,7 +330,11 @@ def vpn_status():
     xray = {
         "installed": xray_binary is not None,
         "service": _unit_state("xray.service") if xray_binary else "not-installed",
+        "config_status": "unavailable",
+        "inbounds": [],
     }
+    if xray_binary:
+        xray.update(_xray_config_summary())
     return {"wireguard": wireguard, "openvpn": openvpn, "xray": xray}
 
 
