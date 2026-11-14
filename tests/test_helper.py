@@ -32,6 +32,12 @@ def test_registry_round_trip_and_lock(state_dir):
     assert stat.S_IMODE((state_dir / "managed-users.lock").stat().st_mode) == 0o600
 
 
+def test_xray_lock_does_not_relabel_operation_oserror(state_dir):
+    with pytest.raises(OSError, match="operation failed inside lock"):
+        with helper._xray_client_lock():
+            raise OSError("operation failed inside lock")
+
+
 def test_registry_rejects_corrupt_data(state_dir):
     path = state_dir / "managed-users.json"
     path.write_text('{"client01": "not-a-uid"}', encoding="utf-8")

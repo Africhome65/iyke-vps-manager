@@ -905,21 +905,30 @@ def _xray_client_lock():
     check_state_dir()
     path = state_path("xray-clients.lock")
     fd = None
+    lock_file = None
     try:
-        fd = os.open(path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
-        info = os.fstat(fd)
-        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
-                or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) & 0o077):
-            fail("Xray client lock file is unsafe")
-        os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "r+") as lock_file:
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                    or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) & 0o077):
+                fail("Xray client lock file is unsafe")
+            os.fchmod(fd, 0o600)
+            lock_file = os.fdopen(fd, "r+")
             fd = None
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-            yield
-    except OSError:
-        fail("Unable to lock Xray client registry")
+        except OSError as exc:
+            detail = exc.strerror or type(exc).__name__
+            fail(f"Unable to lock Xray client registry: {detail}")
+
+        # Keep the protected operation outside the OSError handler above.
+        # Otherwise any later filesystem/process error is incorrectly reported
+        # as a lock acquisition failure.
+        yield
     finally:
-        if fd is not None:
+        if lock_file is not None:
+            lock_file.close()
+        elif fd is not None:
             os.close(fd)
 
 
