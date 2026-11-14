@@ -243,7 +243,7 @@ def test_vpn_status_reports_missing_software(monkeypatch):
         "xray": {"installed": False, "service": "not-installed",
                  "config_status": "unavailable", "inbounds": [], "public_hostname": ""},
         "hysteria": {"installed": False, "service": "not-installed",
-                     "service_unit": "", "config_status": "missing"},
+                     "service_unit": "", "config_status": "missing", "tls_mode": "unknown"},
     }
 
 
@@ -1983,7 +1983,7 @@ def test_hysteria_start_verifies_active_and_enabled_dedicated_unit(tmp_path, mon
     ]
 
 
-def test_hysteria_http01_preflight_refuses_occupied_tcp80(monkeypatch):
+def test_hysteria_http01_preflight_refuses_occupied_tcp80(monkeypatch, capsys):
     monkeypatch.setattr(helper, "hysteria_validate", lambda domain, port: {
         "domain": "vpn.example.com", "udp_ports": [8443]
     })
@@ -1991,8 +1991,9 @@ def test_hysteria_http01_preflight_refuses_occupied_tcp80(monkeypatch):
         "dns_resolves": True, "ports_checked": True, "available_ports": [8443]
     })
     monkeypatch.setattr(helper, "_hysteria_tcp_listener_check", lambda port: False)
-    with pytest.raises(SystemExit, match="TCP port 80 is already in use"):
+    with pytest.raises(SystemExit):
         helper.hysteria_http01_preview("vpn.example.com", "8443")
+    assert "TCP port 80 is already in use" in capsys.readouterr().err
 
 
 def test_hysteria_http01_configure_refuses_occupied_tcp80_before_writing(monkeypatch):
