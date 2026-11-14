@@ -561,6 +561,7 @@ def test_xray_apply_config_backs_up_validates_and_restarts(tmp_path, monkeypatch
     config_path.write_bytes(original)
     config_path.chmod(0o600)
     monkeypatch.setattr(helper, "XRAY_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(helper.os, "fchown", lambda *args: None)
     monkeypatch.setattr(helper.shutil, "which", lambda name: "/usr/local/bin/xray")
     monkeypatch.setattr(helper, "_unit_state", lambda unit: "active")
     calls = []
