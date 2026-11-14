@@ -173,7 +173,7 @@ def test_openvpn_crl_state_rejects_symlink_crl(tmp_path, monkeypatch):
     def fake_lstat(path):
         info = real_lstat(path)
         return type("Info", (), {
-            "st_mode": info.st_mode, "st_uid": info.st_uid, "st_nlink": info.st_nlink
+            "st_mode": info.st_mode, "st_uid": 0, "st_nlink": info.st_nlink
         })()
 
     monkeypatch.setattr(helper.os, "lstat", fake_lstat)
