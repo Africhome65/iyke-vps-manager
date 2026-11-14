@@ -982,7 +982,13 @@ def main():
             return
         fail("Unsupported WireGuard action")
 
-    if action == "openvpn_clients":\n        if set(request) != {"action"}:\n            fail("Unexpected request fields")\n        print(json.dumps(openvpn_clients()))\n        return\n\n    if action.startswith("xray_"):
+    if action == "openvpn_clients":
+        if set(request) != {"action"}:
+            fail("Unexpected request fields")
+        print(json.dumps(openvpn_clients()))
+        return
+
+    if action.startswith("xray_"):
         if handle_xray_action(request):
             return
         fail("Unsupported Xray action")
