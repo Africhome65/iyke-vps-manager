@@ -489,39 +489,57 @@ def _openvpn_secure_issued_key(path):
             os.close(fd)
 
 
-def _openvpn_remove_unsafe_issued_key(path):
-    """Remove a newly created key if its permissions cannot be made root-only."""
+def _openvpn_remove_issued_artifact(path):
+    """Remove one newly created root-owned regular PKI artifact without following links."""
     try:
         info = os.lstat(path)
-        if stat.S_ISREG(info.st_mode) and info.st_uid == 0 and info.st_nlink == 1:
-            os.unlink(path)
-            return not os.path.lexists(path)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_nlink != 1:
+            return False
+        os.unlink(path)
+        return not os.path.lexists(path)
+    except FileNotFoundError:
+        return True
     except OSError:
         return False
-    return not os.path.lexists(path)
+
+
+def _openvpn_remove_unsafe_issued_key(path):
+    """Remove a newly created key if its permissions cannot be made root-only."""
+    return _openvpn_remove_issued_artifact(path)
 
 
 def _openvpn_cleanup_failed_issuance(pki, name, easyrsa):
     """Make a partially issued identity unusable and verify revocation in the CA index."""
     key_path = os.path.join(pki, "private", name + ".key")
+    cert_path = os.path.join(pki, "issued", name + ".crt")
     if not _openvpn_secure_issued_key(key_path):
         if not _openvpn_remove_unsafe_issued_key(key_path):
             fail("Failed issuance left a private key that could not be secured or removed; manual recovery is required")
     index_path = os.path.join(pki, "index.txt")
     current_index = _read_openvpn_index(index_path)
     if current_index is None:
+        _openvpn_remove_issued_artifact(key_path)
+        _openvpn_remove_issued_artifact(cert_path)
         fail("Failed issuance could not be reconciled with the CA index; manual recovery is required")
     record = next((row for row in _openvpn_index_clients(current_index)
                    if row["common_name"] == name), None)
-    if record is None or record["status"] != "valid":
+    if record is None:
+        if (not _openvpn_remove_issued_artifact(key_path)
+                or not _openvpn_remove_issued_artifact(cert_path)):
+            fail("Unindexed failed issuance artifacts could not be removed; manual recovery is required")
         return
-    _openvpn_run_easyrsa(easyrsa, pki, ["revoke", name])
-    revoked_index = _read_openvpn_index(index_path)
-    revoked = next((row for row in _openvpn_index_clients(revoked_index or "")
-                    if row["common_name"] == name), None)
-    if revoked is None or revoked["status"] != "revoked":
-        fail("Failed issuance certificate could not be confirmed revoked; manual recovery is required")
-    _openvpn_run_easyrsa(easyrsa, pki, ["gen-crl"])
+    if record["status"] == "valid":
+        _openvpn_run_easyrsa(easyrsa, pki, ["revoke", name])
+        revoked_index = _read_openvpn_index(index_path)
+        revoked = next((row for row in _openvpn_index_clients(revoked_index or "")
+                        if row["common_name"] == name), None)
+        if revoked is None or revoked["status"] != "revoked":
+            _openvpn_remove_issued_artifact(key_path)
+            fail("Failed issuance certificate could not be confirmed revoked; manual recovery is required")
+        _openvpn_run_easyrsa(easyrsa, pki, ["gen-crl"])
+    # A failed issuance must never leave a locally usable client identity.
+    if not _openvpn_remove_issued_artifact(key_path):
+        fail("Failed issuance private key could not be removed; manual recovery is required")
 
 
 def _openvpn_create_client_unlocked(name, locked_pki):
