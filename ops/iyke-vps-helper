@@ -358,7 +358,7 @@ def _openvpn_easyrsa_path():
     return path
 
 
-def openvpn_create_client(name):
+def _openvpn_create_client_unlocked(name):
     """Issue a passwordless client keypair and certificate without returning its private key."""
     if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name):
         fail("Invalid OpenVPN client name")
@@ -435,6 +435,17 @@ def _openvpn_pki_lock(pki):
     finally:
         if fd is not None:
             os.close(fd)
+
+
+def openvpn_create_client(name):
+    """Serialize Easy-RSA issuance with revocation for this PKI."""
+    if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name):
+        fail("Invalid OpenVPN client name")
+    if name in {"root", "server", "ca"}:
+        fail("That OpenVPN client name is reserved")
+    pki, _index = _openvpn_unique_pki(require_ca_key=True)
+    with _openvpn_pki_lock(pki):
+        return _openvpn_create_client_unlocked(name)
 
 
 def _openvpn_atomic_pki_file(path, content):
