@@ -287,8 +287,12 @@ def create_app(test_config=None):
                       "openvpn": {"installed": False, "instances": []},
                       "xray": {"installed": False, "service": "not-installed"}}
             flash(str(exc), "error")
-        # Older helper responses and test doubles may not include Xray yet.
-        status.setdefault("xray", {"installed": False, "service": "not-installed"})
+        # Older helper responses and test doubles may omit newer Xray metadata.
+        xray_status = status.setdefault(
+            "xray", {"installed": False, "service": "not-installed"}
+        )
+        xray_status.setdefault("config_status", "unavailable")
+        xray_status.setdefault("inbounds", [])
         peers = []
         xray_clients = []
         if status.get("xray", {}).get("installed"):
