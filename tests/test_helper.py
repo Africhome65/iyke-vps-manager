@@ -238,6 +238,57 @@ def test_vpn_status_reports_missing_software(monkeypatch):
 
 
 
+def test_openvpn_runtime_config_matches_active_exact_process(monkeypatch):
+    calls = []
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        return helper.subprocess.CompletedProcess(args, 0, "4321\\n", "")
+    monkeypatch.setattr(helper, "_unit_state", lambda unit: "active")
+    monkeypatch.setattr(helper.subprocess, "run", fake_run)
+    monkeypatch.setattr("builtins.open", lambda path, mode: __import__("io").BytesIO(
+        b"/usr/sbin/openvpn\\0--config\\0/etc/openvpn/server/edge.conf\\0"
+    ))
+    monkeypatch.setattr(helper.os, "readlink", lambda path: "/usr/sbin/openvpn")
+    monkeypatch.setattr(helper.shutil, "which", lambda name: "/usr/sbin/openvpn")
+    assert helper._openvpn_runtime_config_matches(
+        "openvpn-server@edge.service", "/etc/openvpn/server/edge.conf"
+    ) is True
+    assert len(calls) == 2
+
+
+def test_openvpn_runtime_config_rejects_inactive_or_mismatched_process(monkeypatch):
+    monkeypatch.setattr(helper, "_unit_state", lambda unit: "inactive")
+    assert helper._openvpn_runtime_config_matches(
+        "openvpn-server@edge.service", "/etc/openvpn/server/edge.conf"
+    ) is False
+
+
+def test_openvpn_runtime_config_rejects_relative_or_multiple_configs(monkeypatch):
+    monkeypatch.setattr(helper, "_unit_state", lambda unit: "active")
+    monkeypatch.setattr(helper.subprocess, "run", lambda args, **kwargs:
+        helper.subprocess.CompletedProcess(args, 0, "4321\\n", ""))
+    monkeypatch.setattr("builtins.open", lambda path, mode: __import__("io").BytesIO(
+        b"/usr/sbin/openvpn\\0--config\\0edge.conf\\0--config\\0/etc/openvpn/server/edge.conf\\0"
+    ))
+    monkeypatch.setattr(helper.os, "readlink", lambda path: "/usr/sbin/openvpn")
+    monkeypatch.setattr(helper.shutil, "which", lambda name: "/usr/sbin/openvpn")
+    assert helper._openvpn_runtime_config_matches(
+        "openvpn-server@edge.service", "/etc/openvpn/server/edge.conf"
+    ) is False
+
+
+def test_openvpn_runtime_config_rejects_unexpected_unit_and_systemctl_failure(monkeypatch):
+    assert helper._openvpn_runtime_config_matches(
+        "openvpn-server@../edge.service", "/etc/openvpn/server/edge.conf"
+    ) is False
+    monkeypatch.setattr(helper, "_unit_state", lambda unit: "active")
+    monkeypatch.setattr(helper.subprocess, "run", lambda args, **kwargs:
+        helper.subprocess.CompletedProcess(args, 1, "", "failed"))
+    assert helper._openvpn_runtime_config_matches(
+        "openvpn-server@edge.service", "/etc/openvpn/server/edge.conf"
+    ) is False
+
+
 def test_openvpn_crl_state_reports_missing_directive(tmp_path, monkeypatch):
     config = tmp_path / "server.conf"
     config.write_text("port 1194\nproto udp\n", encoding="utf-8")
