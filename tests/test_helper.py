@@ -129,6 +129,20 @@ def test_openvpn_index_parses_client_metadata_without_private_material():
     ]
 
 
+
+def _pretend_root_owned(monkeypatch):
+    real_lstat = helper.os.lstat
+    real_fstat = helper.os.fstat
+
+    def as_root(info):
+        return type("Info", (), {
+            "st_mode": info.st_mode, "st_uid": 0, "st_nlink": info.st_nlink
+        })()
+
+    monkeypatch.setattr(helper.os, "lstat", lambda path: as_root(real_lstat(path)))
+    monkeypatch.setattr(helper.os, "fstat", lambda fd: as_root(real_fstat(fd)))
+
+
 def test_openvpn_clients_discovers_one_trusted_database(tmp_path, monkeypatch):
     pki = tmp_path / "pki"
     for name in ("issued", "private"):
@@ -139,6 +153,7 @@ def test_openvpn_clients_discovers_one_trusted_database(tmp_path, monkeypatch):
         "V\t301231235959Z\t\t01\tunknown\t/CN=phone01\n",
         encoding="utf-8")
     (pki / "index.txt").chmod(0o600)
+    _pretend_root_owned(monkeypatch)
     monkeypatch.setattr(helper, "_openvpn_pki_candidates", lambda: [str(pki)])
     result = helper.openvpn_clients()
     assert result == {
@@ -173,6 +188,7 @@ def test_openvpn_clients_requires_unambiguous_database(tmp_path, monkeypatch):
         (pki / "index.txt").write_text("", encoding="utf-8")
         (pki / "index.txt").chmod(0o600)
         paths.append(str(pki))
+    _pretend_root_owned(monkeypatch)
     monkeypatch.setattr(helper, "_openvpn_pki_candidates", lambda: paths)
     result = helper.openvpn_clients()
     assert result["available"] is False
