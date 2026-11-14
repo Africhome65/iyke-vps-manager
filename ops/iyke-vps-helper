@@ -253,7 +253,8 @@ def _read_openvpn_index(path):
             return None
         with os.fdopen(fd, "r", encoding="utf-8") as source:
             fd = -1
-            return source.read(1024 * 1024)
+            contents = source.read(1024 * 1024 + 1)
+        return contents if len(contents) <= 1024 * 1024 else None
     except (OSError, UnicodeDecodeError):
         return None
     finally:
@@ -355,12 +356,20 @@ def _openvpn_crl_state(config_path):
 
     if not os.path.isabs(crl_path):
         crl_path = os.path.join(os.path.dirname(config_path), crl_path)
+    crl_fd = None
     try:
-        crl_info = os.lstat(crl_path)
-        ready = (stat.S_ISREG(crl_info.st_mode) and crl_info.st_uid == 0
-                 and crl_info.st_nlink == 1)
+        crl_fd = os.open(crl_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        crl_info = os.fstat(crl_fd)
+        ready = (
+            stat.S_ISREG(crl_info.st_mode) and crl_info.st_uid == 0
+            and crl_info.st_nlink == 1
+            and not (stat.S_IMODE(crl_info.st_mode) & 0o022)
+        )
     except OSError:
         ready = False
+    finally:
+        if crl_fd is not None:
+            os.close(crl_fd)
     return {"crl_configured": True, "crl_file_present": ready}
 
 
