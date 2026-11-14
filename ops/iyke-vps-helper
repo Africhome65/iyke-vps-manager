@@ -2157,13 +2157,13 @@ def _hysteria_ufw_tcp80_allowed():
     result = subprocess.run([ufw, "status"], text=True, capture_output=True,
                             check=False, timeout=20)
     if result.returncode != 0 or not re.search(
-            r"^Status:\\s+active\\s*$", result.stdout, re.I | re.M):
+            r"^Status:\s+active\s*$", result.stdout, re.I | re.M):
         return False
     allowed = False
     denied = False
     for line in result.stdout.splitlines():
         match = re.match(
-            r"^\\s*80(?:/(tcp|udp))?\\s+(ALLOW|DENY|REJECT)\\s+IN\\b",
+            r"^\s*80(?:/(tcp|udp))?\s+(ALLOW|DENY|REJECT)\s+IN\b",
             line, re.I,
         )
         if match and (match.group(1) or "any").lower() in {"tcp", "any"}:
