@@ -246,7 +246,7 @@ def test_openvpn_runtime_config_matches_active_exact_process(monkeypatch):
     monkeypatch.setattr(helper, "_unit_state", lambda unit: "active")
     monkeypatch.setattr(helper.subprocess, "run", fake_run)
     monkeypatch.setattr("builtins.open", lambda path, mode: __import__("io").BytesIO(
-        b"/usr/sbin/openvpn\\0--config\\0/etc/openvpn/server/edge.conf\\0"
+        b"/usr/sbin/openvpn\0--config\0/etc/openvpn/server/edge.conf\0"
     ))
     monkeypatch.setattr(helper.os, "readlink", lambda path: "/usr/sbin/openvpn")
     monkeypatch.setattr(helper.shutil, "which", lambda name: "/usr/sbin/openvpn")
@@ -268,7 +268,7 @@ def test_openvpn_runtime_config_rejects_relative_or_multiple_configs(monkeypatch
     monkeypatch.setattr(helper.subprocess, "run", lambda args, **kwargs:
         helper.subprocess.CompletedProcess(args, 0, "4321\\n", ""))
     monkeypatch.setattr("builtins.open", lambda path, mode: __import__("io").BytesIO(
-        b"/usr/sbin/openvpn\\0--config\\0edge.conf\\0--config\\0/etc/openvpn/server/edge.conf\\0"
+        b"/usr/sbin/openvpn\0--config\0edge.conf\0--config\0/etc/openvpn/server/edge.conf\0"
     ))
     monkeypatch.setattr(helper.os, "readlink", lambda path: "/usr/sbin/openvpn")
     monkeypatch.setattr(helper.shutil, "which", lambda name: "/usr/sbin/openvpn")
