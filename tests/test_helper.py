@@ -761,3 +761,42 @@ def test_openvpn_create_client_rejects_failed_easyrsa(monkeypatch):
         helper.openvpn_create_client("phone01")
 
 
+
+
+def test_openvpn_unique_pki_rejects_ambiguity_even_if_only_one_has_ca_key(tmp_path, monkeypatch):
+    paths = []
+    for label in ("one", "two"):
+        pki = tmp_path / label
+        for name in ("issued", "private"):
+            (pki / name).mkdir(parents=True, mode=0o700)
+            (pki / name).chmod(0o700)
+        pki.chmod(0o700)
+        (pki / "index.txt").write_text("", encoding="utf-8")
+        (pki / "index.txt").chmod(0o600)
+        paths.append(pki)
+    ca_key = paths[0] / "private" / "ca.key"
+    ca_key.write_text("PRIVATE CA KEY", encoding="utf-8")
+    ca_key.chmod(0o600)
+    _pretend_root_owned(monkeypatch)
+    monkeypatch.setattr(helper, "_openvpn_pki_candidates", lambda: [str(p) for p in paths])
+    with pytest.raises(SystemExit, match="More than one Easy-RSA database"):
+        helper._openvpn_unique_pki(require_ca_key=True)
+
+
+def test_openvpn_unique_pki_rejects_group_readable_ca_key(tmp_path, monkeypatch):
+    pki = tmp_path / "pki"
+    for name in ("issued", "private"):
+        (pki / name).mkdir(parents=True, mode=0o700)
+        (pki / name).chmod(0o700)
+    pki.chmod(0o700)
+    (pki / "index.txt").write_text("", encoding="utf-8")
+    (pki / "index.txt").chmod(0o600)
+    ca_key = pki / "private" / "ca.key"
+    ca_key.write_text("PRIVATE CA KEY", encoding="utf-8")
+    ca_key.chmod(0o640)
+    _pretend_root_owned(monkeypatch)
+    monkeypatch.setattr(helper, "_openvpn_pki_candidates", lambda: [str(pki)])
+    with pytest.raises(SystemExit, match="accessible only to root"):
+        helper._openvpn_unique_pki(require_ca_key=True)
+
+
