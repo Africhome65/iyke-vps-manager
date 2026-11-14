@@ -973,6 +973,22 @@ def test_hysteria_readiness_fails_closed_when_socket_inspection_unavailable(monk
     assert result["occupied_ports"] == []
 
 
+def test_hysteria_readiness_handles_command_spawn_errors_fail_closed(monkeypatch):
+    def fake_run(command, **kwargs):
+        raise OSError("simulated executable failure")
+
+    monkeypatch.setattr(helper.shutil, "which",
+                        lambda name: f"/usr/bin/{name}" if name in {"getent", "ss"} else None)
+    monkeypatch.setattr(helper.subprocess, "run", fake_run)
+    result = helper.hysteria_readiness("example.test", "8443")
+    assert result["dns_checked"] is True
+    assert result["dns_resolves"] is False
+    assert result["port_check_status"] == "unavailable"
+    assert result["available_ports"] == []
+    assert result["service_changed"] is False
+    assert result["firewall_changed"] is False
+
+
 def test_hysteria_action_validates_exact_request_shape(capsys, monkeypatch):
     monkeypatch.setattr(helper, "hysteria_readiness", lambda domain, ports: {
         "valid": True, "domain": domain, "udp_ports": [53, 8443],
