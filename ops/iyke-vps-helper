@@ -2180,11 +2180,34 @@ def hysteria_start_service():
             or not isinstance(config.get("auth"), dict)
             or config["auth"].get("type") != "password"
             or not isinstance(config["auth"].get("password"), str)
-            or len(config["auth"]["password"]) < 32
-            or not isinstance(config.get("tls"), dict)
-            or not isinstance(config["tls"].get("cert"), str)
-            or not isinstance(config["tls"].get("key"), str)):
+            or len(config["auth"]["password"]) < 32):
         fail("The dedicated Hysteria configuration is incomplete or invalid")
+    manual_tls = config.get("tls")
+    acme = config.get("acme")
+    if isinstance(manual_tls, dict) and set(manual_tls) >= {"cert", "key"}:
+        tls_mode = "manual"
+    elif (isinstance(acme, dict) and acme.get("type") == "http"
+          and acme.get("dir") == HYSTERIA_ACME_DIR
+          and isinstance(acme.get("domains"), list) and len(acme["domains"]) == 1
+          and isinstance(acme["domains"][0], str)
+          and isinstance(acme.get("email"), str)):
+        tls_mode = "acme-http01"
+        if not _hysteria_tcp_listener_check(80):
+            fail("TCP port 80 is occupied; refusing to start the HTTP-01 challenge listener")
+        if not _hysteria_ufw_tcp80_allowed():
+            fail("Allow TCP port 80 through UFW before starting HTTP-01 certificate issuance")
+        try:
+            acme_info = os.lstat(HYSTERIA_ACME_DIR)
+            account = pwd.getpwnam("hysteria")
+            group = grp.getgrnam("hysteria")
+        except (OSError, KeyError):
+            fail("The protected Hysteria ACME storage directory is unavailable")
+        if (not stat.S_ISDIR(acme_info.st_mode) or acme_info.st_uid != account.pw_uid
+                or acme_info.st_gid != group.gr_gid
+                or stat.S_IMODE(acme_info.st_mode) & 0o077):
+            fail("The Hysteria ACME storage directory has unsafe ownership or permissions")
+    else:
+        fail("The dedicated Hysteria configuration must contain either valid manual TLS or HTTP-01 ACME settings")
     try:
         with open(HYSTERIA_UNIT_PATH, "r", encoding="utf-8") as source:
             unit = source.read(16384)
@@ -2210,7 +2233,7 @@ def hysteria_start_service():
     if enabled.returncode == 0:
         fail("The dedicated Hysteria service is already enabled")
     started = subprocess.run([systemctl, "start", "iyke-hysteria.service"],
-                             text=True, capture_output=True, check=False, timeout=60)
+                             text=True, capture_output=True, check=False, timeout=180)
     if started.returncode != 0:
         subprocess.run([systemctl, "stop", "iyke-hysteria.service"],
                        text=True, capture_output=True, check=False, timeout=30)
@@ -2235,7 +2258,7 @@ def hysteria_start_service():
     return {
         "started": True, "enabled": True, "service_state": "active",
         "service_unit": "iyke-hysteria.service", "firewall_changed": False,
-        "udp_port": int(config["listen"][1:]),
+        "udp_port": int(config["listen"][1:]), "tls_mode": tls_mode,
     }
 
 
