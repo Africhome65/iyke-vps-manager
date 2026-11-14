@@ -206,7 +206,7 @@ def test_xray_config_summary_fails_closed_on_unsafe_parent(monkeypatch):
 
 def test_caddy_public_hostname_reads_one_site_without_exposing_config(monkeypatch, tmp_path):
     config = tmp_path / "Caddyfile"
-    config.write_text("smarty.example.net {\\n  reverse_proxy 127.0.0.1:10000\\n}\\n", encoding="utf-8")
+    config.write_text("smarty.example.net {" + chr(10) + "  reverse_proxy 127.0.0.1:10000" + chr(10) + "}" + chr(10), encoding="utf-8")
     real_open = helper.os.open
     real_lstat = helper.os.lstat
     real_fstat = helper.os.fstat
@@ -223,7 +223,7 @@ def test_caddy_public_hostname_reads_one_site_without_exposing_config(monkeypatc
 
 def test_caddy_public_hostname_fails_closed_when_multiple_sites(monkeypatch, tmp_path):
     config = tmp_path / "Caddyfile"
-    config.write_text("one.example.net {\\n}\n two.example.net {\\n}\n", encoding="utf-8")
+    config.write_text("one.example.net {" + chr(10) + "}" + chr(10) + "two.example.net {" + chr(10) + "}" + chr(10), encoding="utf-8")
     real_open = helper.os.open
     real_lstat = helper.os.lstat
     monkeypatch.setattr(helper.os, "lstat", lambda path: type("Info", (), {
