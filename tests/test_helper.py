@@ -439,7 +439,7 @@ def test_openvpn_crl_state_verifies_crl_against_matching_ca(tmp_path, monkeypatc
         (pki / name).mkdir(parents=True, mode=0o700)
         (pki / name).chmod(0o700)
     pki.chmod(0o700)
-    config.write_text("port 1194\ncrl-verify pki/crl.pem\n", encoding="utf-8")
+    config.write_text("port 1194\nca pki/ca.crt\ncrl-verify pki/crl.pem\n", encoding="utf-8")
     config.chmod(0o600)
     for name in ("crl.pem", "ca.crt"):
         (pki / name).write_text("test public material\n", encoding="utf-8")
@@ -487,7 +487,7 @@ def test_openvpn_crl_state_rejects_invalid_signature(tmp_path, monkeypatch):
         (pki / name).mkdir(parents=True, mode=0o700)
         (pki / name).chmod(0o700)
     pki.chmod(0o700)
-    config.write_text("crl-verify pki/crl.pem\n", encoding="utf-8")
+    config.write_text("ca pki/ca.crt\ncrl-verify pki/crl.pem\n", encoding="utf-8")
     config.chmod(0o600)
     for name in ("crl.pem", "ca.crt"):
         (pki / name).write_text("invalid public material", encoding="utf-8")
