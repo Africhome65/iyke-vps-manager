@@ -542,13 +542,19 @@ def _openvpn_cleanup_failed_issuance(pki, name, easyrsa):
             regenerate_crl = True
         elif record["status"] == "revoked":
             # Easy-RSA can update index.txt and then fail before CRL generation.
-            regenerate_crl = not _openvpn_crl_contains_serial(crl_path, record["serial"])
+            # A matching serial is insufficient unless the CRL verifies against
+            # this PKI's trusted CA certificate.
+            regenerate_crl = not (
+                _openvpn_crl_contains_serial(crl_path, record["serial"])
+                and _openvpn_crl_signed_by_ca(crl_path, pki)
+            )
         else:
             fail("Failed issuance certificate has an unexpected CA index status")
         if regenerate_crl:
             _openvpn_run_easyrsa(easyrsa, pki, ["gen-crl"])
-            if not _openvpn_crl_contains_serial(crl_path, record["serial"]):
-                fail("Failed issuance CRL does not contain the revoked certificate serial")
+            if (not _openvpn_crl_contains_serial(crl_path, record["serial"])
+                    or not _openvpn_crl_signed_by_ca(crl_path, pki)):
+                fail("Failed issuance CRL is missing the revoked serial or has an invalid CA signature")
     except BaseException:
         _openvpn_remove_issued_artifact(key_path)
         fail("Failed issuance revocation or CRL verification failed; private key removed, manual CA recovery is required")
@@ -744,6 +750,34 @@ def _openvpn_crl_contains_serial(crl_path, serial):
         return False
     finally:
         os.close(crl_fd)
+
+
+def _openvpn_crl_signed_by_ca(crl_path, pki):
+    """Verify the CRL signature against this PKI's trusted CA certificate."""
+    crl_fd = _openvpn_trusted_file(crl_path, 4 * 1024 * 1024)
+    ca_fd = _openvpn_trusted_file(os.path.join(pki, "ca.crt"), 1024 * 1024)
+    if crl_fd is None or ca_fd is None:
+        if crl_fd is not None:
+            os.close(crl_fd)
+        if ca_fd is not None:
+            os.close(ca_fd)
+        return False
+    try:
+        openssl = shutil.which("openssl")
+        if not openssl:
+            return False
+        result = subprocess.run(
+            [openssl, "crl", "-in", f"/proc/self/fd/{crl_fd}",
+             "-CAfile", f"/proc/self/fd/{ca_fd}", "-noout", "-verify"],
+            text=True, capture_output=True, check=False, timeout=10,
+            pass_fds=(crl_fd, ca_fd),
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+    finally:
+        os.close(crl_fd)
+        os.close(ca_fd)
 
 
 def openvpn_revoke_client(name):
