@@ -2004,3 +2004,73 @@ def test_hysteria_http01_configure_refuses_occupied_tcp80_before_writing(monkeyp
                         lambda path: pytest.fail("must not touch filesystem after failed preflight"))
     with pytest.raises(SystemExit, match="TCP port 80 is already in use"):
         helper.hysteria_configure_http01("vpn.example.com", "8443", "admin@example.com")
+
+
+def test_hysteria_start_refuses_http01_when_tcp80_becomes_occupied(tmp_path, monkeypatch):
+    config_path, unit_path = _prepare_hysteria_start_files(tmp_path, monkeypatch)
+    acme_dir = tmp_path / "acme"
+    acme_dir.mkdir(mode=0o700)
+    config_path.write_text(json.dumps({
+        "listen": ":8443",
+        "auth": {"type": "password", "password": "x" * 43},
+        "acme": {
+            "domains": ["vpn.example.com"], "email": "admin@example.com",
+            "type": "http", "dir": str(acme_dir),
+        },
+    }), encoding="utf-8")
+    monkeypatch.setattr(helper, "HYSTERIA_ACME_DIR", str(acme_dir))
+    monkeypatch.setattr(helper.pwd, "getpwnam",
+                        lambda name: type("Account", (), {"pw_uid": 1001})())
+    real_lstat = helper.os.lstat
+
+    def fake_lstat(path):
+        if path == str(acme_dir):
+            return type("Info", (), {"st_mode": helper.stat.S_IFDIR | 0o700,
+                                     "st_uid": 1001, "st_gid": 123})()
+        return real_lstat(path)
+
+    monkeypatch.setattr(helper.os, "lstat", fake_lstat)
+    monkeypatch.setattr(helper, "_hysteria_tcp_listener_check", lambda port: False)
+    monkeypatch.setattr(helper.subprocess, "run",
+                        lambda *a, **k: pytest.fail("must not invoke systemd when port 80 is occupied"))
+    with pytest.raises(SystemExit, match="TCP port 80 is occupied"):
+        helper.hysteria_start_service()
+
+
+def test_hysteria_http01_firewall_adds_only_tcp80(tmp_path, monkeypatch):
+    config_path = tmp_path / "iyke.yaml"
+    config_path.write_text(json.dumps({
+        "listen": ":8443",
+        "acme": {"type": "http", "domains": ["vpn.example.com"]},
+    }), encoding="utf-8")
+    monkeypatch.setattr(helper, "HYSTERIA_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(helper.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(helper, "_hysteria_tcp_listener_check", lambda port: True)
+    monkeypatch.setattr(helper.shutil, "which",
+                        lambda name: "/usr/sbin/ufw" if name == "ufw" else None)
+    calls = []
+    status_count = 0
+
+    def fake_run(command, **kwargs):
+        nonlocal status_count
+        calls.append(command)
+        if command == ["/usr/sbin/ufw", "status"]:
+            status_count += 1
+            output = "Status: active\n" if status_count == 1 else (
+                "Status: active\n80/tcp ALLOW IN Anywhere\n"
+            )
+            return helper.subprocess.CompletedProcess(command, 0, output, "")
+        if command[:3] == ["/usr/sbin/ufw", "allow", "80/tcp"]:
+            return helper.subprocess.CompletedProcess(command, 0, "Rule added", "")
+        raise AssertionError(command)
+
+    monkeypatch.setattr(helper.subprocess, "run", fake_run)
+    result = helper.hysteria_firewall_open_http01_tcp()
+    assert result == {
+        "opened": True, "already_allowed": False, "firewall_changed": True,
+        "firewall": "ufw", "tcp_port": 80,
+    }
+    assert [c for c in calls if c[:2] == ["/usr/sbin/ufw", "allow"]] == [
+        ["/usr/sbin/ufw", "allow", "80/tcp", "comment",
+         "Iyke VPS Manager Hysteria ACME HTTP-01"]
+    ]
