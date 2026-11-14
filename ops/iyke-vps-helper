@@ -2148,6 +2148,7 @@ def hysteria_configure_single_port(domain, port, cert_path, key_path):
     )
     return {
         "configured": True,
+        "tls_mode": "manual",
         "domain": preview["domain"],
         "udp_port": preview["udp_port"],
         "config_path": HYSTERIA_CONFIG_PATH,
