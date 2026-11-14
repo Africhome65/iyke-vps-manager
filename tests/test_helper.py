@@ -549,3 +549,79 @@ def test_xray_sync_remove_refuses_unknown_client_id(monkeypatch):
                         lambda *args: pytest.fail("must not apply a config without exact client match"))
     with pytest.raises(SystemExit):
         helper._xray_sync_remove("vless", "not-managed-id")
+
+
+
+def test_xray_apply_config_backs_up_validates_and_restarts(tmp_path, monkeypatch):
+    state = _prepare_xray_state_dir(monkeypatch, tmp_path)
+    config_dir = tmp_path / "xray"
+    config_dir.mkdir(mode=0o700)
+    config_path = config_dir / "config.json"
+    original = b'{"inbounds":[]}\n'
+    config_path.write_bytes(original)
+    config_path.chmod(0o600)
+    monkeypatch.setattr(helper, "XRAY_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(helper.shutil, "which", lambda name: "/usr/local/bin/xray")
+    monkeypatch.setattr(helper, "_unit_state", lambda unit: "active")
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return helper.subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper.subprocess, "run", fake_run)
+    helper._xray_apply_config({"inbounds": [{"protocol": "vless"}]}, original, 0o600)
+    backups = list(state.glob("xray-config-backup-*.json"))
+    assert len(backups) == 1
+    assert backups[0].read_bytes() == original
+    assert stat.S_IMODE(backups[0].stat().st_mode) == 0o600
+    assert json.loads(config_path.read_text()) == {"inbounds": [{"protocol": "vless"}]}
+    assert calls[0][:4] == ["/usr/local/bin/xray", "run", "-test", "-config"]
+    assert calls[1] == ["systemctl", "restart", "xray.service"]
+
+
+def test_xray_apply_config_does_not_replace_when_validation_fails(tmp_path, monkeypatch):
+    _prepare_xray_state_dir(monkeypatch, tmp_path)
+    config_dir = tmp_path / "xray"
+    config_dir.mkdir(mode=0o700)
+    config_path = config_dir / "config.json"
+    original = b'{"inbounds":[]}\n'
+    config_path.write_bytes(original)
+    config_path.chmod(0o600)
+    monkeypatch.setattr(helper, "XRAY_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(helper.shutil, "which", lambda name: "/usr/local/bin/xray")
+
+    def failed_test(command, **kwargs):
+        return helper.subprocess.CompletedProcess(command, 1, "", "invalid")
+
+    monkeypatch.setattr(helper.subprocess, "run", failed_test)
+    with pytest.raises(SystemExit):
+        helper._xray_apply_config({"inbounds": []}, original, 0o600)
+    assert config_path.read_bytes() == original
+
+
+def test_xray_apply_config_rolls_back_when_restart_fails(tmp_path, monkeypatch):
+    _prepare_xray_state_dir(monkeypatch, tmp_path)
+    config_dir = tmp_path / "xray"
+    config_dir.mkdir(mode=0o700)
+    config_path = config_dir / "config.json"
+    original = b'{"inbounds":[]}\n'
+    config_path.write_bytes(original)
+    config_path.chmod(0o600)
+    monkeypatch.setattr(helper, "XRAY_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(helper.shutil, "which", lambda name: "/usr/local/bin/xray")
+    monkeypatch.setattr(helper, "_unit_state", lambda unit: "active")
+    restarts = {"count": 0}
+
+    def fake_run(command, **kwargs):
+        if command[0] == "systemctl":
+            restarts["count"] += 1
+            if restarts["count"] == 1:
+                raise helper.subprocess.CalledProcessError(1, command)
+        return helper.subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper.subprocess, "run", fake_run)
+    with pytest.raises(SystemExit):
+        helper._xray_apply_config({"inbounds": [{"protocol": "vmess"}]}, original, 0o600)
+    assert config_path.read_bytes() == original
+    assert restarts["count"] == 2
