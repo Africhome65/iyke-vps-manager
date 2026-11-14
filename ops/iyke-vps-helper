@@ -1013,6 +1013,30 @@ def xray_list_clients():
                 for row in _load_xray_clients()]
 
 
+def xray_get_client_profile(name):
+    if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name):
+        fail("Invalid Xray client name")
+    with xray_client_lock():
+        rows = _load_xray_clients()
+        client = next((row for row in rows if row["name"] == name), None)
+        if client is None:
+            fail("Xray client does not exist")
+        summary = _xray_config_summary()
+        hostname = _caddy_public_hostname()
+        if summary["config_status"] != "readable" or not hostname:
+            fail("A safe Xray configuration and one public Caddy hostname are required")
+        matches = [row for row in summary["inbounds"]
+                   if row["protocol"] == client["protocol"] and row["network"] == "ws"
+                   and row["security"] == "none" and row.get("path")
+                   and row["listen"] in {"127.0.0.1", "::1", "localhost"}
+                   and row["port"] in range(1, 65536)]
+        if len(matches) != 1:
+            fail("The existing Xray WebSocket inbound is ambiguous or unsupported")
+        inbound = matches[0]
+        return {"name": name, "protocol": client["protocol"], "id": client["id"],
+                "hostname": hostname, "path": inbound["path"], "port": 443}
+
+
 def xray_create_client(name, protocol):
     if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name):
         fail("Invalid Xray client name")
@@ -1043,6 +1067,11 @@ def handle_xray_action(request):
         if set(request) != {"action"}:
             fail("Unexpected request fields")
         print(json.dumps(xray_list_clients()))
+        return True
+    if action == "xray_get_profile":
+        if set(request) != {"action", "name"}:
+            fail("Unexpected request fields")
+        print(json.dumps(xray_get_client_profile(request["name"])))
         return True
     if action == "xray_create_client":
         if set(request) != {"action", "name", "protocol"}:
