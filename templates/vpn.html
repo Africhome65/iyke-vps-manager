@@ -42,6 +42,17 @@
       {% else %}<p class="empty">OpenVPN is installed, but no server configuration files were found.</p>{% endif %}
       <hr>
       {% if openvpn_inventory.available %}
+        <h3>OpenVPN client profiles</h3>
+        <p class="muted">Enter the public DNS name or public IP address clients will use to reach this VPS. Profiles are generated only when exactly one active server configuration is verified. Unsupported TLS modes are rejected rather than guessed.</p>
+        {% for cert in openvpn_inventory.clients %}
+          {% if cert.status == 'valid' and cert.common_name not in ['root', 'server', 'ca'] %}
+            <form method="get" action="{{ url_for('download_openvpn_profile', name=cert.common_name) }}" class="inline">
+              <label for="ovpn-endpoint-{{ loop.index }}">Endpoint for {{ cert.common_name }}</label>
+              <input id="ovpn-endpoint-{{ loop.index }}" name="endpoint" maxlength="253" required placeholder="vpn.example.com or public IP">
+              <button type="submit">Download .ovpn</button>
+            </form>
+          {% endif %}
+        {% endfor %}
         <h3>Issue a client certificate</h3>
         <form method="post" action="{{ url_for('create_openvpn_client') }}">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
