@@ -842,6 +842,7 @@ def _load_xray_clients():
         if (not isinstance(row, dict) or set(row) != {"name", "protocol", "id"}
                 or not isinstance(row["name"], str)
                 or not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", row["name"])
+                or not isinstance(row["protocol"], str)
                 or row["protocol"] not in {"vmess", "vless"}
                 or not isinstance(row["id"], str)):
             fail("Xray client registry contains invalid data")
@@ -900,7 +901,7 @@ def xray_create_client(name, protocol):
         fail("Invalid Xray client name")
     if name in {"root", "server", "ca"}:
         fail("That Xray client name is reserved")
-    if protocol not in {"vmess", "vless"}:
+    if not isinstance(protocol, str) or protocol not in {"vmess", "vless"}:
         fail("Unsupported Xray client protocol")
     if not os.path.isfile("/usr/local/bin/xray") or not os.access("/usr/local/bin/xray", os.X_OK):
         fail("Install Xray-core before creating clients")
