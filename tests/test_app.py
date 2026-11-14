@@ -482,7 +482,7 @@ def test_hysteria_start_route_requires_login_and_keeps_firewall_unchanged(client
     assert response.status_code == 302
     request = __import__("json").loads(calls[0][1]["input"])
     assert request == {"action": "hysteria_start_service"}
-    assert calls[0][1]["timeout"] == 150
+    assert calls[0][1]["timeout"] == 240
 
 
 
