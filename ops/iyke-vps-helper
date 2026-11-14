@@ -1223,7 +1223,7 @@ def _restore_xray_config(original_raw, metadata):
 
 def _apply_xray_config_change(candidate, original_raw, metadata):
     """Validate, back up, atomically install, and restart with rollback on failure."""
-    encoded = (json.dumps(candidate, indent=2, ensure_ascii=False) + "\\n").encode("utf-8")
+    encoded = (json.dumps(candidate, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
     directory = os.path.dirname(XRAY_CONFIG_PATH)
     fd = None
     temporary = None
