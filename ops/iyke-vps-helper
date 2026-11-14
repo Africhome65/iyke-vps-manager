@@ -1377,10 +1377,17 @@ def vpn_status():
         xray.update(_xray_config_summary())
         xray["public_hostname"] = _caddy_public_hostname()
     hysteria_binary = shutil.which("hysteria")
+    custom_hysteria_config = os.path.isfile(HYSTERIA_CONFIG_PATH)
+    custom_hysteria_unit = os.path.isfile(HYSTERIA_UNIT_PATH)
+    hysteria_unit = "iyke-hysteria.service" if custom_hysteria_unit else "hysteria-server.service"
     hysteria = {
         "installed": hysteria_binary is not None,
-        "service": _unit_state("hysteria-server.service") if hysteria_binary else "not-installed",
-        "config_status": "present" if os.path.isfile("/etc/hysteria/config.yaml") else "missing",
+        "service": _unit_state(hysteria_unit) if hysteria_binary else "not-installed",
+        "service_unit": hysteria_unit if hysteria_binary else "",
+        "config_status": (
+            "configured" if custom_hysteria_config else
+            "example" if os.path.isfile("/etc/hysteria/config.yaml") else "missing"
+        ),
     }
     return {"wireguard": wireguard, "openvpn": openvpn, "xray": xray,
             "hysteria": hysteria}
