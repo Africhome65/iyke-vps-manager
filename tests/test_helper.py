@@ -664,7 +664,7 @@ def test_openvpn_crl_state_rejects_symlinked_config_parent(tmp_path, monkeypatch
     real_parent = tmp_path / "real"
     real_parent.mkdir()
     config = real_parent / "server.conf"
-    config.write_text("crl-verify crl.pem\\n", encoding="utf-8")
+    config.write_text("crl-verify crl.pem\n", encoding="utf-8")
     config.chmod(0o600)
     alias = tmp_path / "alias"
     alias.symlink_to(real_parent, target_is_directory=True)
@@ -676,12 +676,12 @@ def test_openvpn_crl_state_rejects_symlinked_config_parent(tmp_path, monkeypatch
 
 def test_openvpn_crl_state_rejects_symlinked_crl_parent(tmp_path, monkeypatch):
     config = tmp_path / "server.conf"
-    config.write_text("crl-verify alias/crl.pem\\n", encoding="utf-8")
+    config.write_text("crl-verify alias/crl.pem\n", encoding="utf-8")
     config.chmod(0o600)
     real_parent = tmp_path / "real"
     real_parent.mkdir()
     crl = real_parent / "crl.pem"
-    crl.write_text("public CRL data\\n", encoding="utf-8")
+    crl.write_text("public CRL data\n", encoding="utf-8")
     crl.chmod(0o600)
     alias = tmp_path / "alias"
     alias.symlink_to(real_parent, target_is_directory=True)
@@ -694,7 +694,7 @@ def test_openvpn_crl_state_rejects_symlinked_crl_parent(tmp_path, monkeypatch):
 def test_openvpn_crl_state_rejects_symlink_config(tmp_path):
     target = tmp_path / "actual-server.conf"
     config = tmp_path / "server.conf"
-    target.write_text("crl-verify crl.pem\\n", encoding="utf-8")
+    target.write_text("crl-verify crl.pem\n", encoding="utf-8")
     target.chmod(0o600)
     config.symlink_to(target)
     assert helper._openvpn_crl_state(str(config)) == {
@@ -709,12 +709,12 @@ def test_openvpn_create_client_uses_trusted_easyrsa_and_never_returns_key(tmp_pa
         (pki / name).chmod(0o700)
     pki.chmod(0o700)
     script = tmp_path / "easyrsa"
-    script.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
+    script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     script.chmod(0o700)
     _pretend_root_owned(monkeypatch)
     monkeypatch.setattr(helper, "_openvpn_unique_pki", lambda require_ca_key=False: (str(pki), ""))
     monkeypatch.setattr(helper, "_openvpn_easyrsa_path", lambda: str(script))
-    updated = "V\\t301231235959Z\\t\\t01\\tunknown\\t/CN=phone01\\n"
+    updated = "V\t301231235959Z\t\t01\tunknown\t/CN=phone01\n"
     monkeypatch.setattr(helper, "_read_openvpn_index", lambda path: updated)
     calls = []
     def fake_run(args, **kwargs):
@@ -745,7 +745,7 @@ def test_openvpn_create_client_rejects_invalid_or_reserved_names(monkeypatch):
 def test_openvpn_create_client_refuses_existing_name_and_files(monkeypatch):
     monkeypatch.setattr(helper, "_openvpn_unique_pki",
                         lambda require_ca_key=False: ("/safe/pki",
-                            "V\\t301231235959Z\\t\\t01\\tunknown\\t/CN=phone01\\n"))
+                            "V\t301231235959Z\t\t01\tunknown\t/CN=phone01\n"))
     monkeypatch.setattr(helper, "_openvpn_easyrsa_path",
                         lambda: pytest.fail("Easy-RSA must not run for duplicate"))
     with pytest.raises(SystemExit):
