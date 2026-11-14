@@ -975,8 +975,12 @@ def test_hysteria_configure_single_port_writes_dedicated_disabled_service(monkey
     monkeypatch.setattr(helper, "HYSTERIA_CONFIG_PATH", str(hysteria_dir / "iyke.yaml"))
     monkeypatch.setattr(helper, "HYSTERIA_UNIT_PATH", str(systemd_dir / "iyke-hysteria.service"))
     monkeypatch.setattr(helper.os, "geteuid", lambda: 0)
-    monkeypatch.setattr(helper.os, "lstat", lambda path: types.SimpleNamespace(
-        st_mode=stat.S_IFDIR | 0o755, st_uid=0
+    original_lstat = helper.os.lstat
+    safe_dirs = {"/etc", "/etc/hysteria", "/etc/systemd", "/etc/systemd/system",
+                 str(etc), str(hysteria_dir), str(etc / "systemd"), str(systemd_dir)}
+    monkeypatch.setattr(helper.os, "lstat", lambda path: (
+        types.SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_uid=0)
+        if str(path) in safe_dirs else original_lstat(path)
     ))
     monkeypatch.setattr(helper.os, "fchown", lambda *args: None)
     monkeypatch.setattr(helper.grp, "getgrnam", lambda name: types.SimpleNamespace(gr_gid=998))
@@ -1025,8 +1029,11 @@ def test_hysteria_configure_single_port_refuses_existing_config(monkeypatch, tmp
     monkeypatch.setattr(helper, "HYSTERIA_CONFIG_PATH", str(config))
     monkeypatch.setattr(helper, "HYSTERIA_UNIT_PATH", str(tmp_path / "iyke-hysteria.service"))
     monkeypatch.setattr(helper.os, "geteuid", lambda: 0)
-    monkeypatch.setattr(helper.os, "lstat", lambda path: types.SimpleNamespace(
-        st_mode=stat.S_IFDIR | 0o755, st_uid=0
+    original_lstat = helper.os.lstat
+    safe_dirs = {"/etc", "/etc/hysteria", "/etc/systemd", "/etc/systemd/system"}
+    monkeypatch.setattr(helper.os, "lstat", lambda path: (
+        types.SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_uid=0)
+        if str(path) in safe_dirs else original_lstat(path)
     ))
     monkeypatch.setattr(helper, "hysteria_single_port_preview", lambda *args: {
         "dns_resolves": True, "ports_checked": True, "port_available": True,
