@@ -166,6 +166,15 @@
         <button type="submit">Confirm and start Hysteria 2</button>
       </form>
       {% endif %}
+      {% if vpn.hysteria.config_status == 'configured' and vpn.hysteria.service == 'active' %}
+      <hr>
+      <h3>Allow the Hysteria UDP port through UFW (explicit confirmation)</h3>
+      <p class="muted">This opens only the UDP port recorded in the dedicated Hysteria configuration, and only when UFW is active. Existing overlapping deny rules are not overridden. Other firewall managers are not changed.</p>
+      <form method="post" action="{{ url_for('open_hysteria_firewall') }}" onsubmit="return confirm('Add the configured Hysteria UDP port to UFW? This changes the firewall to allow incoming UDP on that one port only.');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit">Confirm and allow Hysteria UDP port</button>
+      </form>
+      {% endif %}
       <hr>
       <h3>Single-port TLS preflight (read-only)</h3>
       <p class="muted">Check one UDP port and an existing certificate/private-key pair. The files must match the domain and be readable by the Hysteria service account. This preview does not create configuration, start services or change firewall rules.</p>
