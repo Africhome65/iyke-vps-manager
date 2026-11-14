@@ -251,7 +251,7 @@ def test_openvpn_profile_download_requires_login_and_is_not_cached(client, monke
     assert client.get("/vpn/openvpn/clients/phone01/profile?endpoint=vpn.example.com").status_code == 302
     login(client)
     calls = []
-    profile = "client\\ndev tun\\nremote vpn.example.com 1194\\n<key>secret</key>\\n"
+    profile = "client\ndev tun\nremote vpn.example.com 1194\n<key>secret</key>\n"
     def fake_run(args, **kwargs):
         calls.append((args, kwargs))
         return subprocess.CompletedProcess(args, 0, stdout=__import__("json").dumps({"name":"phone01","profile":profile}), stderr="")
