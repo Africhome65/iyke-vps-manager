@@ -221,6 +221,105 @@ def _unit_state(unit):
 
 
 
+
+def _openvpn_pki_candidates():
+    root_home = os.path.expanduser("~root")
+    return [
+        "/etc/openvpn/easy-rsa/pki",
+        "/etc/easy-rsa/pki",
+        "/usr/share/easy-rsa/pki",
+        os.path.join(root_home, "openvpn-ca", "pki"),
+    ]
+
+
+def _safe_root_directory(path):
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return False
+    return (stat.S_ISDIR(info.st_mode) and info.st_uid == 0
+            and not (stat.S_IMODE(info.st_mode) & 0o022))
+
+
+def _read_openvpn_index(path):
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError:
+        return None
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
+                or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) & 0o077):
+            return None
+        with os.fdopen(fd, "r", encoding="utf-8") as source:
+            fd = -1
+            return source.read(1024 * 1024)
+    except (OSError, UnicodeDecodeError):
+        return None
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
+def _openvpn_index_clients(index_text):
+    """Parse Easy-RSA index metadata only; never read certificate or key files."""
+    clients = []
+    for line in index_text.splitlines():
+        fields = line.split("\\t")
+        if len(fields) != 6 or fields[0] not in {"V", "R", "E"}:
+            continue
+        status, expiry_raw, revoked_raw, serial, _filename, subject = fields
+        cn_match = re.search(r"(?:^|/)CN=([^/]+)", subject)
+        if not cn_match:
+            continue
+        common_name = cn_match.group(1).replace(r"\\/", "/")
+        if (not common_name or len(common_name) > 128
+                or any(ord(char) < 32 or ord(char) == 127 for char in common_name)):
+            continue
+        try:
+            expiry = datetime.datetime.strptime(expiry_raw, "%y%m%d%H%M%SZ").replace(
+                tzinfo=datetime.timezone.utc)
+        except ValueError:
+            continue
+        current_status = status
+        if current_status == "V" and expiry <= datetime.datetime.now(datetime.timezone.utc):
+            current_status = "E"
+        clients.append({
+            "common_name": common_name,
+            "status": {"V": "valid", "R": "revoked", "E": "expired"}[current_status],
+            "expires": expiry.date().isoformat(),
+            "serial": serial[:64],
+        })
+    clients.sort(key=lambda item: item["common_name"].casefold())
+    return clients
+
+
+def openvpn_clients():
+    """Discover a trusted Easy-RSA PKI and return certificate index metadata only."""
+    candidates = []
+    seen = set()
+    for path in _openvpn_pki_candidates():
+        normalized = os.path.normpath(path)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        if not _safe_root_directory(normalized):
+            continue
+        if not _safe_root_directory(os.path.join(normalized, "issued")):
+            continue
+        if not _safe_root_directory(os.path.join(normalized, "private")):
+            continue
+        index = _read_openvpn_index(os.path.join(normalized, "index.txt"))
+        if index is not None:
+            candidates.append((normalized, index))
+    if len(candidates) != 1:
+        return {"available": False, "reason": (
+            "No trusted Easy-RSA database found" if not candidates
+            else "More than one Easy-RSA database found; configure one explicitly"
+        ), "clients": []}
+    _path, index_text = candidates[0]
+    return {"available": True, "reason": "", "clients": _openvpn_index_clients(index_text)}
+
 def _openvpn_crl_state(config_path):
     """Report CRL enforcement readiness without exposing configuration contents."""
     try:
@@ -883,7 +982,7 @@ def main():
             return
         fail("Unsupported WireGuard action")
 
-    if action.startswith("xray_"):
+    if action == "openvpn_clients":\n        if set(request) != {"action"}:\n            fail("Unexpected request fields")\n        print(json.dumps(openvpn_clients()))\n        return\n\n    if action.startswith("xray_"):
         if handle_xray_action(request):
             return
         fail("Unsupported Xray action")
