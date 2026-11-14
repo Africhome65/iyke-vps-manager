@@ -843,7 +843,7 @@ def test_openvpn_get_profile_builds_inline_profile_only_for_verified_server(monk
 def test_openvpn_revoke_client_requires_client_eku_before_any_easyrsa_action(tmp_path, monkeypatch):
     pki = tmp_path / "pki"
     pki.mkdir(mode=0o700)
-    index = "V\\t301231235959Z\\t\\t01\\tunknown\\t/CN=phone01\\n"
+    index = "V\t301231235959Z\t\t01\tunknown\t/CN=phone01\n"
     monkeypatch.setattr(helper, "_openvpn_unique_pki", lambda require_ca_key=False: (str(pki), index))
     monkeypatch.setattr(helper, "_safe_root_directory", lambda path: True)
     monkeypatch.setattr(helper, "_read_openvpn_index", lambda path: index)
@@ -857,8 +857,8 @@ def test_openvpn_revoke_client_requires_client_eku_before_any_easyrsa_action(tmp
 def test_openvpn_revoke_client_regenerates_verified_crl(tmp_path, monkeypatch):
     pki = tmp_path / "pki"
     pki.mkdir(mode=0o700)
-    initial = "V\\t301231235959Z\\t\\t01\\tunknown\\t/CN=phone01\\n"
-    revoked = "R\\t301231235959Z\\t261114000000Z\\t01\\tunknown\\t/CN=phone01\\n"
+    initial = "V\t301231235959Z\t\t01\tunknown\t/CN=phone01\n"
+    revoked = "R\t301231235959Z\t261114000000Z\t01\tunknown\t/CN=phone01\n"
     index_state = {"value": initial}
     monkeypatch.setattr(helper, "_openvpn_unique_pki", lambda require_ca_key=False: (str(pki), initial))
     monkeypatch.setattr(helper, "_safe_root_directory", lambda path: True)
@@ -875,7 +875,7 @@ def test_openvpn_revoke_client_regenerates_verified_crl(tmp_path, monkeypatch):
         "crl_configured": True, "crl_file_present": True
     })
     monkeypatch.setattr(helper, "_openvpn_config_directives", lambda path: {"cert": [["server.crt"]]})
-    monkeypatch.setattr(helper, "_openvpn_read_pem", lambda path, label: "-----BEGIN X509 CRL-----\\nCRL\\n-----END X509 CRL-----\\n")
+    monkeypatch.setattr(helper, "_openvpn_read_pem", lambda path, label: "-----BEGIN X509 CRL-----\nCRL\n-----END X509 CRL-----\n")
     monkeypatch.setattr(helper, "_openvpn_easyrsa_path", lambda: "/usr/bin/easyrsa")
     calls = []
     def fake_easyrsa(easyrsa, pki_path, arguments):
@@ -916,10 +916,10 @@ def test_openvpn_certificate_is_client_requires_client_auth_eku(monkeypatch, tmp
     monkeypatch.setattr(helper, "_openvpn_trusted_file", lambda path, max_bytes=4 * 1024 * 1024: os.dup(fd))
     monkeypatch.setattr(helper.shutil, "which", lambda name: "/usr/bin/openssl")
     monkeypatch.setattr(helper.subprocess, "run", lambda *a, **k:
-        helper.subprocess.CompletedProcess(a[0], 0, "X509v3 Extended Key Usage:\\n TLS Web Client Authentication\\n", ""))
+        helper.subprocess.CompletedProcess(a[0], 0, "X509v3 Extended Key Usage:\n TLS Web Client Authentication\n", ""))
     assert helper._openvpn_certificate_is_client(str(cert)) is True
     monkeypatch.setattr(helper.subprocess, "run", lambda *a, **k:
-        helper.subprocess.CompletedProcess(a[0], 0, "X509v3 Extended Key Usage:\\n TLS Web Server Authentication\\n", ""))
+        helper.subprocess.CompletedProcess(a[0], 0, "X509v3 Extended Key Usage:\n TLS Web Server Authentication\n", ""))
     assert helper._openvpn_certificate_is_client(str(cert)) is False
     os.close(fd)
 
