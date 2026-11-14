@@ -2,16 +2,19 @@
 """Strict JSON privileged helper. Installed root-owned; invoked through one fixed sudo command."""
 import datetime
 import fcntl
+import grp
 import json
 import ipaddress
 import os
 import re
 import shutil
+import secrets
 import stat
 import subprocess
 import sys
 import tempfile
 import urllib.request
+import urllib.parse
 import uuid
 from contextlib import contextmanager
 
@@ -1981,6 +1984,153 @@ def hysteria_install():
     }
 
 
+
+HYSTERIA_CONFIG_PATH = "/etc/hysteria/iyke.yaml"
+HYSTERIA_UNIT_PATH = "/etc/systemd/system/iyke-hysteria.service"
+
+
+def _hysteria_atomic_write(path, content, mode, group_id=None):
+    directory = os.path.dirname(path)
+    fd = None
+    temporary = None
+    try:
+        fd, temporary = tempfile.mkstemp(prefix=".iyke-hysteria-", dir=directory)
+        os.fchmod(fd, mode)
+        os.fchown(fd, 0, group_id if group_id is not None else 0)
+        with os.fdopen(fd, "w", encoding="utf-8") as target:
+            fd = None
+            target.write(content)
+            target.flush()
+            os.fsync(target.fileno())
+        os.replace(temporary, path)
+        temporary = None
+        dir_fd = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except OSError:
+        fail("Unable to safely write the dedicated Hysteria configuration")
+    finally:
+        if fd is not None:
+            os.close(fd)
+        if temporary is not None:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+
+
+def hysteria_configure_single_port(domain, port, cert_path, key_path):
+    """Create a dedicated disabled Hysteria unit and config; never start/open firewall."""
+    if os.geteuid() != 0:
+        fail("Hysteria configuration requires the privileged helper")
+    preview = hysteria_single_port_preview(domain, str(port), cert_path, key_path)
+    if (not preview.get("dns_resolves") or not preview.get("ports_checked")
+            or not preview.get("port_available")):
+        fail("DNS must resolve and the selected UDP port must be verifiably free before applying")
+    binary = shutil.which("hysteria")
+    systemctl = shutil.which("systemctl")
+    if not binary or not os.path.isfile(binary) or not os.access(binary, os.X_OK):
+        fail("Install the official Hysteria 2 binary before configuring a server")
+    if not systemctl:
+        fail("systemctl is unavailable")
+    try:
+        group = grp.getgrnam("hysteria")
+    except KeyError:
+        fail("The Hysteria service group is unavailable")
+    for directory in ("/etc", "/etc/hysteria", "/etc/systemd", "/etc/systemd/system"):
+        try:
+            info = os.lstat(directory)
+        except OSError:
+            fail("A required system configuration directory is unavailable")
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0
+                or stat.S_IMODE(info.st_mode) & 0o022):
+            fail("A required system configuration directory has unsafe ownership or permissions")
+    for path in (HYSTERIA_CONFIG_PATH, HYSTERIA_UNIT_PATH):
+        if os.path.lexists(path):
+            fail("A dedicated Hysteria configuration already exists; refusing to overwrite it")
+
+    password = secrets.token_urlsafe(32)
+    config = {
+        "listen": ":" + str(preview["udp_port"]),
+        "tls": {"cert": preview["certificate_path"], "key": preview["private_key_path"]},
+        "auth": {"type": "password", "password": password},
+    }
+    # JSON is a strict YAML 1.2 subset; JSON encoding prevents YAML injection.
+    config_text = json.dumps(config, ensure_ascii=True, indent=2) + "\n"
+    unit_text = (
+        "[Unit]\n"
+        "Description=Iyke VPS Manager Hysteria 2 server\n"
+        "After=network-online.target\n"
+        "Wants=network-online.target\n\n"
+        "[Service]\n"
+        "Type=simple\n"
+        "User=hysteria\n"
+        "Group=hysteria\n"
+        f"ExecStart={binary} server --config {HYSTERIA_CONFIG_PATH}\n"
+        "Restart=on-failure\n"
+        "RestartSec=5s\n"
+        "NoNewPrivileges=true\n"
+        "PrivateTmp=true\n"
+        "ProtectSystem=full\n"
+        "ProtectHome=true\n"
+        "UMask=0027\n\n"
+        "[Install]\n"
+        "WantedBy=multi-user.target\n"
+    )
+    config_written = False
+    unit_written = False
+    try:
+        _hysteria_atomic_write(HYSTERIA_CONFIG_PATH, config_text, 0o640, group.gr_gid)
+        config_written = True
+        _hysteria_atomic_write(HYSTERIA_UNIT_PATH, unit_text, 0o644, 0)
+        unit_written = True
+        reload_result = subprocess.run(
+            [systemctl, "daemon-reload"], text=True, capture_output=True,
+            check=False, timeout=30,
+        )
+        if reload_result.returncode != 0:
+            raise RuntimeError("systemd could not reload the dedicated Hysteria unit")
+    except (RuntimeError, SystemExit, OSError, subprocess.TimeoutExpired):
+        if unit_written:
+            try:
+                os.unlink(HYSTERIA_UNIT_PATH)
+            except OSError:
+                pass
+        if config_written:
+            try:
+                os.unlink(HYSTERIA_CONFIG_PATH)
+            except OSError:
+                pass
+        try:
+            subprocess.run([systemctl, "daemon-reload"], text=True,
+                           capture_output=True, check=False, timeout=30)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        fail("Hysteria configuration could not be applied; created files were rolled back")
+
+    uri = (
+        "hysteria2://" + urllib.parse.quote(password, safe="")
+        + "@" + preview["domain"] + ":" + str(preview["udp_port"])
+        + "/?sni=" + urllib.parse.quote(preview["domain"], safe="")
+        + "#Iyke-VPS-Manager"
+    )
+    return {
+        "configured": True,
+        "domain": preview["domain"],
+        "udp_port": preview["udp_port"],
+        "config_path": HYSTERIA_CONFIG_PATH,
+        "service_unit": "iyke-hysteria.service",
+        "service_state": "not-started",
+        "service_enabled": False,
+        "firewall_changed": False,
+        "password": password,
+        "client_uri": uri,
+        "warning": "Save the password and client URI now; they are shown only in this response.",
+    }
+
+
 def hysteria_validate(domain, ports):
     """Validate a Hysteria endpoint request without changing the host."""
     if not isinstance(domain, str):
@@ -2660,6 +2810,13 @@ def handle_hysteria_action(request):
         if set(request) != {"action", "domain", "port", "cert_path", "key_path"}:
             fail("Unexpected request fields")
         print(json.dumps(hysteria_single_port_preview(
+            request["domain"], request["port"], request["cert_path"], request["key_path"]
+        )))
+        return True
+    if action == "hysteria_single_port_configure":
+        if set(request) != {"action", "domain", "port", "cert_path", "key_path"}:
+            fail("Unexpected request fields")
+        print(json.dumps(hysteria_configure_single_port(
             request["domain"], request["port"], request["cert_path"], request["key_path"]
         )))
         return True
