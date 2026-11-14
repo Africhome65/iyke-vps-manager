@@ -287,7 +287,8 @@ def create_app(test_config=None):
         except (RuntimeError, json.JSONDecodeError) as exc:
             status = {"wireguard": {"installed": False, "interfaces": []},
                       "openvpn": {"installed": False, "instances": []},
-                      "xray": {"installed": False, "service": "not-installed"}}
+                      "xray": {"installed": False, "service": "not-installed"},
+                      "hysteria": {"installed": False, "service": "not-installed"}}
             flash(str(exc), "error")
         # Older helper responses and test doubles may omit newer Xray metadata.
         xray_status = status.setdefault(
@@ -295,6 +296,8 @@ def create_app(test_config=None):
         )
         xray_status.setdefault("config_status", "unavailable")
         xray_status.setdefault("inbounds", [])
+        status.setdefault("hysteria", {"installed": False, "service": "not-installed"})
+        status["hysteria"].setdefault("config_status", "missing")
         peers = []
         xray_clients = []
         if status.get("xray", {}).get("installed"):
@@ -343,6 +346,24 @@ def create_app(test_config=None):
             audit("xray_installed", "Installed Xray-core using the pinned official installer")
             flash("Xray-core is installed. No VLESS/VMess listeners or firewall rules were configured.", "success")
             flash(f"Xray service state: {result.get('service', 'unknown')}", "success")
+        except (RuntimeError, json.JSONDecodeError) as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("vpn_services"))
+
+    @app.post("/vpn/hysteria/install")
+    @login_required
+    def install_hysteria():
+        try:
+            result = json.loads(run_helper("hysteria_install", timeout=330) or "{}")
+            if result.get("installed") is not True or result.get("service_started") is not False:
+                raise RuntimeError("Hysteria 2 installation could not be verified")
+            audit("hysteria_installed", "Installed Hysteria 2 using the pinned official installer")
+            flash(
+                "Hysteria 2 is installed. Its example configuration is not ready for client connections; "
+                "configure a domain, TLS certificate and authentication before starting the service. "
+                "No firewall rules or listeners were changed.",
+                "success",
+            )
         except (RuntimeError, json.JSONDecodeError) as exc:
             flash(str(exc), "error")
         return redirect(url_for("vpn_services"))
