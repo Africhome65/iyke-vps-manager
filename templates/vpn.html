@@ -143,6 +143,34 @@
         <button type="submit">Check domain and UDP ports</button>
       </form>
       <hr>
+      <h3>Automatic TLS certificate (ACME HTTP-01)</h3>
+      <p class="muted">This option is available only when TCP/80 is free, the domain's IPv4 DNS points only to this VPS, no AAAA record is present, and UFW is active. Hysteria will use TCP/80 for certificate issuance and renewals. Existing Caddy/Nginx listeners are never stopped or reconfigured. The VPS provider firewall must also permit inbound TCP/80.</p>
+      <form method="post" action="{{ url_for('preview_hysteria_http01') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label for="hysteria-acme-preview-domain">Domain</label>
+        <input id="hysteria-acme-preview-domain" name="domain" maxlength="253" required placeholder="vpn.example.com">
+        <label for="hysteria-acme-preview-port">Single Hysteria UDP port</label>
+        <input id="hysteria-acme-preview-port" name="port" type="number" min="1" max="65535" required placeholder="8443">
+        <button type="submit" class="secondary">Check HTTP-01 readiness (read-only)</button>
+      </form>
+      <form method="post" action="{{ url_for('configure_hysteria_http01') }}" onsubmit="return confirm('Create the Hysteria ACME HTTP-01 configuration? This does not start the service or change firewall rules. TCP/80 must be free and reachable for issuance and renewals.');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label for="hysteria-acme-domain">Domain</label>
+        <input id="hysteria-acme-domain" name="domain" maxlength="253" required placeholder="vpn.example.com">
+        <label for="hysteria-acme-port">Single Hysteria UDP port</label>
+        <input id="hysteria-acme-port" name="port" type="number" min="1" max="65535" required placeholder="8443">
+        <label for="hysteria-acme-email">Email for certificate notices</label>
+        <input id="hysteria-acme-email" name="email" type="email" maxlength="254" required placeholder="admin@example.com">
+        <button type="submit">Confirm and create ACME configuration</button>
+      </form>
+      {% if vpn.hysteria.config_status == 'configured' and vpn.hysteria.tls_mode == 'acme-http01' and vpn.hysteria.service != 'active' %}
+      <p class="muted">Before starting, allow TCP/80 in UFW below. Keep TCP/80 reachable afterward so Hysteria can renew the certificate automatically.</p>
+      <form method="post" action="{{ url_for('open_hysteria_http01_firewall') }}" onsubmit="return confirm('Allow incoming TCP port 80 in UFW for ACME certificate issuance and future renewals? This is a persistent firewall change.');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="secondary">Confirm and allow TCP/80 in UFW</button>
+      </form>
+      {% endif %}
+      <hr>
       <h3>Apply single-port configuration (explicit confirmation)</h3>
       <p class="muted">This creates a dedicated root-owned configuration and a separate systemd unit, then reloads systemd. It does not start or enable the service and does not change firewall rules. The certificate and key must already be installed and readable by the Hysteria account.</p>
       <form method="post" action="{{ url_for('configure_hysteria_single_port') }}" onsubmit="return confirm('Create the dedicated Hysteria configuration and disabled service unit? The service will not start and the firewall will not change.');">
