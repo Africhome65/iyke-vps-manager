@@ -602,3 +602,32 @@ def test_xray_client_mutation_refuses_ambiguous_inbounds(tmp_path, monkeypatch):
     with pytest.raises(SystemExit):
         helper.xray_create_client("phone01", "vmess")
     assert helper._load_xray_clients() == []
+
+
+
+def test_xray_apply_restores_original_bytes_if_atomic_replace_reports_failure(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    config_path = tmp_path / "config.json"
+    config_path.write_text('{"old":true}\n', encoding="utf-8")
+    original = b'{"old":true}\n'
+    metadata = SimpleNamespace(
+        st_uid=os.geteuid(), st_gid=os.getegid(),
+        st_mode=stat.S_IFREG | 0o600, st_ino=123, st_mtime_ns=456
+    )
+    monkeypatch.setattr(helper, "XRAY_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(helper, "_read_xray_config_document",
+                        lambda: (original, {"inbounds": []}, metadata))
+    monkeypatch.setattr(helper, "_xray_validate_candidate", lambda path: None)
+    monkeypatch.setattr(helper, "_save_xray_backup", lambda raw: "/protected/backup.bak")
+    writes = []
+
+    def fail_first_write(raw, info):
+        writes.append(raw)
+        if len(writes) == 1:
+            raise SystemExit(1)
+
+    monkeypatch.setattr(helper, "_atomic_xray_config_write", fail_first_write)
+    with pytest.raises(SystemExit):
+        helper._apply_xray_config_change({"inbounds": []}, original, metadata)
+    assert len(writes) == 2
+    assert writes[1] == original
