@@ -912,6 +912,94 @@ def test_hysteria_install_uses_pinned_official_installer_in_transient_service(mo
     assert kwargs["timeout"] == 330
 
 
+def test_hysteria_validate_accepts_separate_udp_ports_without_side_effects():
+    result = helper.hysteria_validate("VPN.Example.com.", "53, 8443")
+    assert result == {
+        "valid": True, "domain": "vpn.example.com", "udp_ports": [53, 8443],
+        "listener_strategy": "separate-listeners", "service_changed": False,
+        "firewall_changed": False, "dns_checked": False, "ports_checked": False,
+    }
+
+
+@pytest.mark.parametrize("domain,ports", [
+    ("localhost", "53"), ("bad..example.com", "53"),
+    ("-bad.example.com", "53"), ("example.com", "0"),
+    ("example.com", "65536"), ("example.com", "53,53"),
+    ("example.com", "53,,8443"), ("example.com", "53-8443"),
+    ("example.com", "53,8443,1,2,3,4,5,6,7"),
+])
+def test_hysteria_validate_rejects_invalid_inputs(domain, ports):
+    with pytest.raises(SystemExit):
+        helper.hysteria_validate(domain, ports)
+
+
+def test_hysteria_readiness_reports_dns_and_udp_conflicts_read_only(monkeypatch):
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        if command[0] == "/usr/bin/getent":
+            return helper.subprocess.CompletedProcess(
+                command, 0, "203.0.113.10 STREAM example.test\\n", ""
+            )
+        return helper.subprocess.CompletedProcess(
+            command, 0,
+            "UNCONN 0 0 127.0.0.53:53 0.0.0.0:*\\n", ""
+        )
+
+    monkeypatch.setattr(helper.shutil, "which",
+                        lambda name: f"/usr/bin/{name}" if name in {"getent", "ss"} else None)
+    monkeypatch.setattr(helper.subprocess, "run", fake_run)
+    result = helper.hysteria_readiness("example.test", "53,8443")
+    assert result["dns_checked"] is True
+    assert result["dns_resolves"] is True
+    assert result["dns_addresses"] == ["203.0.113.10"]
+    assert result["ports_checked"] is True
+    assert result["occupied_ports"] == [53]
+    assert result["available_ports"] == [8443]
+    assert result["service_changed"] is False
+    assert result["firewall_changed"] is False
+    assert len(calls) == 2
+
+
+def test_hysteria_readiness_fails_closed_when_socket_inspection_unavailable(monkeypatch):
+    monkeypatch.setattr(helper.shutil, "which",
+                        lambda name: "/usr/bin/getent" if name == "getent" else None)
+    monkeypatch.setattr(helper.subprocess, "run", lambda *a, **k:
+                        helper.subprocess.CompletedProcess(a[0], 0, "", ""))
+    result = helper.hysteria_readiness("example.test", "8443")
+    assert result["port_check_status"] == "unavailable"
+    assert result["available_ports"] == []
+    assert result["occupied_ports"] == []
+
+
+def test_hysteria_readiness_handles_command_spawn_errors_fail_closed(monkeypatch):
+    def fake_run(command, **kwargs):
+        raise OSError("simulated executable failure")
+
+    monkeypatch.setattr(helper.shutil, "which",
+                        lambda name: f"/usr/bin/{name}" if name in {"getent", "ss"} else None)
+    monkeypatch.setattr(helper.subprocess, "run", fake_run)
+    result = helper.hysteria_readiness("example.test", "8443")
+    assert result["dns_checked"] is True
+    assert result["dns_resolves"] is False
+    assert result["port_check_status"] == "unavailable"
+    assert result["available_ports"] == []
+    assert result["service_changed"] is False
+    assert result["firewall_changed"] is False
+
+
+def test_hysteria_action_validates_exact_request_shape(capsys, monkeypatch):
+    monkeypatch.setattr(helper, "hysteria_readiness", lambda domain, ports: {
+        "valid": True, "domain": domain, "udp_ports": [53, 8443],
+        "service_changed": False,
+    })
+    assert helper.handle_hysteria_action({
+        "action": "hysteria_validate", "domain": "vpn.example.com", "ports": "53,8443"
+    })
+    assert json.loads(capsys.readouterr().out)["udp_ports"] == [53, 8443]
+
+
 def test_hysteria_action_rejects_unexpected_fields():
     with pytest.raises(SystemExit):
         helper.handle_hysteria_action({"action": "hysteria_install", "domain": "example.com"})
