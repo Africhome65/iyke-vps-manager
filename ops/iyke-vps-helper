@@ -2149,6 +2149,31 @@ def hysteria_configure_single_port(domain, port, cert_path, key_path):
 
 
 
+
+def _hysteria_ufw_tcp80_allowed():
+    ufw = shutil.which("ufw")
+    if not ufw:
+        return False
+    result = subprocess.run([ufw, "status"], text=True, capture_output=True,
+                            check=False, timeout=20)
+    if result.returncode != 0 or not re.search(
+            r"^Status:\\s+active\\s*$", result.stdout, re.I | re.M):
+        return False
+    allowed = False
+    denied = False
+    for line in result.stdout.splitlines():
+        match = re.match(
+            r"^\\s*80(?:/(tcp|udp))?\\s+(ALLOW|DENY|REJECT)\\s+IN\\b",
+            line, re.I,
+        )
+        if match and (match.group(1) or "any").lower() in {"tcp", "any"}:
+            if match.group(2).upper() == "ALLOW":
+                allowed = True
+            else:
+                denied = True
+    return allowed and not denied
+
+
 def hysteria_start_service():
     """Start and enable only the dedicated manager-owned Hysteria unit."""
     if os.geteuid() != 0:
@@ -3302,6 +3327,23 @@ def handle_hysteria_action(request):
         if set(request) != {"action"}:
             fail("Unexpected request fields")
         print(json.dumps(hysteria_firewall_open_udp()))
+        return True
+    if action == "hysteria_http01_preview":
+        if set(request) != {"action", "domain", "port"}:
+            fail("Unexpected request fields")
+        print(json.dumps(hysteria_http01_preview(request["domain"], request["port"])))
+        return True
+    if action == "hysteria_http01_configure":
+        if set(request) != {"action", "domain", "port", "email"}:
+            fail("Unexpected request fields")
+        print(json.dumps(hysteria_configure_http01(
+            request["domain"], request["port"], request["email"]
+        )))
+        return True
+    if action == "hysteria_firewall_open_http01_tcp":
+        if set(request) != {"action"}:
+            fail("Unexpected request fields")
+        print(json.dumps(hysteria_firewall_open_http01_tcp()))
         return True
     if action == "hysteria_start_service":
         if set(request) != {"action"}:
