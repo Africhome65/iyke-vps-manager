@@ -136,7 +136,8 @@ def _pretend_root_owned(monkeypatch):
 
     def as_root(info):
         return type("Info", (), {
-            "st_mode": info.st_mode, "st_uid": 0, "st_nlink": info.st_nlink
+            "st_mode": info.st_mode, "st_uid": 0, "st_nlink": info.st_nlink,
+            "st_size": info.st_size
         })()
 
     monkeypatch.setattr(helper.os, "lstat", lambda path: as_root(real_lstat(path)))
