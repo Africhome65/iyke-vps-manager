@@ -459,6 +459,28 @@ def create_app(test_config=None):
             flash(str(exc), "error")
             return redirect(url_for("vpn_services"))
 
+
+    @app.post("/vpn/hysteria/start")
+    @login_required
+    def start_hysteria_service():
+        try:
+            result = json.loads(run_helper("hysteria_start_service", timeout=150) or "{}")
+            if (result.get("started") is not True or result.get("enabled") is not True
+                    or result.get("service_state") != "active"
+                    or result.get("service_unit") != "iyke-hysteria.service"
+                    or result.get("firewall_changed") is not False):
+                raise RuntimeError("Hysteria service activation could not be verified")
+            audit("hysteria_service_started",
+                  f"Started dedicated Hysteria service on UDP/{result['udp_port']}; firewall unchanged")
+            flash(
+                f"Hysteria 2 is active and enabled on UDP/{result['udp_port']}. "
+                "The firewall has not been changed; client connections may still be blocked.",
+                "success",
+            )
+        except (RuntimeError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("vpn_services"))
+
     @app.post("/vpn/hysteria/install")
     @login_required
     def install_hysteria():
