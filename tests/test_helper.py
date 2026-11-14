@@ -964,6 +964,82 @@ def test_hysteria_single_port_preview_rejects_multiple_ports():
         helper.hysteria_single_port_preview("example.com", "8443,9443", "/tmp/cert.pem", "/tmp/key.pem")
 
 
+
+def test_hysteria_configure_single_port_writes_dedicated_disabled_service(monkeypatch, tmp_path):
+    import types
+    etc = tmp_path / "etc"
+    hysteria_dir = etc / "hysteria"
+    systemd_dir = etc / "systemd" / "system"
+    hysteria_dir.mkdir(parents=True)
+    systemd_dir.mkdir(parents=True)
+    monkeypatch.setattr(helper, "HYSTERIA_CONFIG_PATH", str(hysteria_dir / "iyke.yaml"))
+    monkeypatch.setattr(helper, "HYSTERIA_UNIT_PATH", str(systemd_dir / "iyke-hysteria.service"))
+    monkeypatch.setattr(helper.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(helper.os, "lstat", lambda path: types.SimpleNamespace(
+        st_mode=stat.S_IFDIR | 0o755, st_uid=0
+    ))
+    monkeypatch.setattr(helper.os, "fchown", lambda *args: None)
+    monkeypatch.setattr(helper.grp, "getgrnam", lambda name: types.SimpleNamespace(gr_gid=998))
+    monkeypatch.setattr(helper.shutil, "which", lambda name: {
+        "hysteria": "/usr/local/bin/hysteria", "systemctl": "/usr/bin/systemctl"
+    }.get(name))
+    monkeypatch.setattr(helper.os.path, "isfile", lambda path: path == "/usr/local/bin/hysteria")
+    monkeypatch.setattr(helper.os, "access", lambda path, mode: True)
+    monkeypatch.setattr(helper, "hysteria_single_port_preview", lambda *args: {
+        "dns_resolves": True, "ports_checked": True, "port_available": True,
+        "domain": "vpn.example.com", "udp_port": 8443,
+        "certificate_path": "/etc/ssl/fullchain.pem", "private_key_path": "/etc/ssl/privkey.pem"
+    })
+    commands = []
+    def fake_run(command, **kwargs):
+        commands.append(command)
+        return helper.subprocess.CompletedProcess(command, 0, "", "")
+    monkeypatch.setattr(helper.subprocess, "run", fake_run)
+
+    result = helper.hysteria_configure_single_port(
+        "vpn.example.com", "8443", "/etc/ssl/fullchain.pem", "/etc/ssl/privkey.pem"
+    )
+    config_path = hysteria_dir / "iyke.yaml"
+    unit_path = systemd_dir / "iyke-hysteria.service"
+    config = helper.json.loads(config_path.read_text(encoding="utf-8"))
+    unit = unit_path.read_text(encoding="utf-8")
+    assert result["configured"] is True
+    assert result["service_enabled"] is False
+    assert result["service_state"] == "not-started"
+    assert result["firewall_changed"] is False
+    assert config["listen"] == ":8443"
+    assert config["auth"]["password"] == result["password"]
+    assert config["tls"]["cert"] == "/etc/ssl/fullchain.pem"
+    assert "User=hysteria" in unit and "Group=hysteria" in unit
+    assert "iyke.yaml" in unit
+    assert config_path.stat().st_mode & 0o777 == 0o640
+    assert unit_path.stat().st_mode & 0o777 == 0o644
+    assert commands == [["/usr/bin/systemctl", "daemon-reload"]]
+    assert result["client_uri"].startswith("hysteria2://")
+
+
+def test_hysteria_configure_single_port_refuses_existing_config(monkeypatch, tmp_path):
+    import types
+    config = tmp_path / "iyke.yaml"
+    config.write_text("do not overwrite", encoding="utf-8")
+    monkeypatch.setattr(helper, "HYSTERIA_CONFIG_PATH", str(config))
+    monkeypatch.setattr(helper, "HYSTERIA_UNIT_PATH", str(tmp_path / "iyke-hysteria.service"))
+    monkeypatch.setattr(helper.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(helper.os, "lstat", lambda path: types.SimpleNamespace(
+        st_mode=stat.S_IFDIR | 0o755, st_uid=0
+    ))
+    monkeypatch.setattr(helper, "hysteria_single_port_preview", lambda *args: {
+        "dns_resolves": True, "ports_checked": True, "port_available": True,
+        "domain": "vpn.example.com", "udp_port": 8443,
+        "certificate_path": "/etc/ssl/fullchain.pem", "private_key_path": "/etc/ssl/privkey.pem"
+    })
+    with pytest.raises(SystemExit):
+        helper.hysteria_configure_single_port(
+            "vpn.example.com", "8443", "/etc/ssl/fullchain.pem", "/etc/ssl/privkey.pem"
+        )
+    assert config.read_text(encoding="utf-8") == "do not overwrite"
+
+
 def test_hysteria_validate_accepts_separate_udp_ports_without_side_effects():
     result = helper.hysteria_validate("VPN.Example.com.", "53, 8443")
     assert result == {
