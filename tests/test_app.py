@@ -485,6 +485,30 @@ def test_hysteria_start_route_requires_login_and_keeps_firewall_unchanged(client
     assert calls[0][1]["timeout"] == 150
 
 
+
+def test_hysteria_firewall_route_requires_login_and_calls_helper(client, monkeypatch):
+    response = client.post("/vpn/hysteria/firewall/open")
+    assert response.status_code == 302
+    login(client)
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(
+            args, 0,
+            stdout='{"opened":true,"already_allowed":false,"firewall_changed":true,'
+                   '"firewall":"ufw","udp_port":8443}',
+            stderr="",
+        )
+
+    monkeypatch.setattr("app.subprocess.run", fake_run)
+    response = client.post("/vpn/hysteria/firewall/open")
+    assert response.status_code == 302
+    request = __import__("json").loads(calls[0][1]["input"])
+    assert request == {"action": "hysteria_firewall_open_udp"}
+    assert calls[0][1]["timeout"] == 90
+
+
 def test_hysteria_install_route_requires_login_and_calls_helper(client, monkeypatch):
     response = client.post("/vpn/hysteria/install")
     assert response.status_code == 302
