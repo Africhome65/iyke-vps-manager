@@ -247,6 +247,31 @@ def test_openvpn_client_issuance_route_rejects_invalid_name_before_helper(client
 
 
 
+def test_openvpn_revoke_client_route_requires_login_and_calls_helper(client, monkeypatch):
+    assert client.post("/vpn/openvpn/clients/phone01/revoke").status_code == 302
+    login(client)
+    calls = []
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(
+            args, 0,
+            stdout='{"name":"phone01","revoked":true,"crl_regenerated":true,"server_reload_performed":false}',
+            stderr=""
+        )
+    monkeypatch.setattr("app.subprocess.run", fake_run)
+    response = client.post("/vpn/openvpn/clients/phone01/revoke")
+    assert response.status_code == 302
+    request = __import__("json").loads(calls[0][1]["input"])
+    assert request == {"action": "openvpn_revoke_client", "name": "phone01"}
+    assert calls[0][1]["timeout"] == 240
+
+
+def test_openvpn_revoke_client_route_rejects_invalid_name(client, monkeypatch):
+    login(client)
+    monkeypatch.setattr("app.subprocess.run", lambda *a, **k: pytest.fail("helper should not run"))
+    assert client.post("/vpn/openvpn/clients/../revoke").status_code in {400, 404}
+
+
 def test_openvpn_profile_download_requires_login_and_is_not_cached(client, monkeypatch):
     assert client.get("/vpn/openvpn/clients/phone01/profile?endpoint=vpn.example.com").status_code == 302
     login(client)
