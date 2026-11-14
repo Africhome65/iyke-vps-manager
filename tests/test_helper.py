@@ -115,16 +115,152 @@ def test_vpn_status_reports_missing_software(monkeypatch):
     assert helper.vpn_status() == {
         "wireguard": {"installed": False, "interfaces": []},
         "openvpn": {"installed": False, "instances": []},
-        "xray": {"installed": False, "service": "not-installed"},
+        "xray": {"installed": False, "service": "not-installed",
+                 "config_status": "unavailable", "inbounds": [], "public_hostname": ""},
     }
+
+
+def _prepare_xray_state_dir(monkeypatch, tmp_path):
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    state.chmod(0o700)
+    monkeypatch.setattr(helper, "STATE_DIR", str(state))
+    return state
+
+
+def test_xray_create_client_fails_closed_without_live_sync(tmp_path, monkeypatch):
+    state = _prepare_xray_state_dir(monkeypatch, tmp_path)
+
+    # Simulate an unavailable or unsafe live configuration explicitly.  Do not
+    # inspect the host running pytest: it may have a real Xray installation.
+    monkeypatch.setattr(
+        helper, "_read_xray_config_document",
+        lambda: helper.fail("Existing Xray configuration is unavailable")
+    )
+    with pytest.raises(SystemExit):
+        helper.xray_create_client("phone01", "vless")
+    assert not (state / "xray-clients.json").exists()
+
+
+def test_xray_create_client_validates_name_and_protocol_before_failing_closed(tmp_path, monkeypatch):
+    _prepare_xray_state_dir(monkeypatch, tmp_path)
+    with pytest.raises(SystemExit):
+        helper.xray_create_client("Phone01", "vless")
+    with pytest.raises(SystemExit):
+        helper.xray_create_client("phone01", "trojan")
+
+
+def test_xray_revoke_client_fails_closed_without_touching_registry(tmp_path, monkeypatch):
+    state = _prepare_xray_state_dir(monkeypatch, tmp_path)
+    registry = state / "xray-clients.json"
+    registry.write_text('[{"name":"phone01","protocol":"vless","id":"00000000-0000-4000-8000-000000000001"}]\n',
+                        encoding="utf-8")
+    registry.chmod(0o600)
+    before = registry.read_bytes()
+    with pytest.raises(SystemExit):
+        helper.xray_revoke_client("phone01")
+    assert registry.read_bytes() == before
+
+
+def test_xray_config_summary_reports_only_safe_inbound_metadata(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({
+        "inbounds": [
+            {"listen": "127.0.0.1", "port": 10000, "protocol": "vmess",
+             "settings": {"clients": [{"id": "secret-uuid"}]},
+             "streamSettings": {"network": "ws", "wsSettings": {"path": "/vmess"}}},
+            {"listen": "127.0.0.1", "port": 10001, "protocol": "vless",
+             "settings": {"clients": [{"id": "another-secret"}]},
+             "streamSettings": {"network": "ws", "wsSettings": {"path": "/vless"}}}
+        ]
+    }), encoding="utf-8")
+    real_open = helper.os.open
+    real_fstat = helper.os.fstat
+    monkeypatch.setattr(helper.os, "lstat", lambda path: type("Info", (), {
+        "st_mode": helper.stat.S_IFDIR | 0o755, "st_uid": 0
+    })())
+    monkeypatch.setattr(helper.os, "open", lambda path, flags: real_open(
+        str(config_path) if path == "/usr/local/etc/xray/config.json" else path, flags))
+    monkeypatch.setattr(helper.os, "fstat", lambda fd: type("Info", (), {
+        "st_mode": helper.stat.S_IFREG | 0o640, "st_uid": 0,
+        "st_nlink": 1, "st_size": config_path.stat().st_size
+    })())
+    summary = helper._xray_config_summary()
+    assert summary == {
+        "config_status": "readable",
+        "inbounds": [
+            {"protocol": "vmess", "listen": "127.0.0.1", "port": 10000,
+             "network": "ws", "security": "none", "path": "/vmess"},
+            {"protocol": "vless", "listen": "127.0.0.1", "port": 10001,
+             "network": "ws", "security": "none", "path": "/vless"}
+        ]
+    }
+    assert "secret-uuid" not in json.dumps(summary)
+    monkeypatch.setattr(helper.os, "open", real_open)
+    monkeypatch.setattr(helper.os, "fstat", real_fstat)
+
+
+def test_xray_config_summary_fails_closed_on_unsafe_parent(monkeypatch):
+    def fake_lstat(path):
+        if path == "/usr/local/etc/xray":
+            return type("Info", (), {"st_mode": helper.stat.S_IFLNK | 0o777, "st_uid": 0})()
+        return type("Info", (), {"st_mode": helper.stat.S_IFDIR | 0o755, "st_uid": 0})()
+    monkeypatch.setattr(helper.os, "lstat", fake_lstat)
+    assert helper._xray_config_summary() == {"config_status": "unsafe", "inbounds": []}
+
+
+def test_caddy_public_hostname_reads_one_site_without_exposing_config(monkeypatch, tmp_path):
+    config = tmp_path / "Caddyfile"
+    config.write_text("smarty.example.net {" + chr(10) + "  reverse_proxy 127.0.0.1:10000" + chr(10) + "}" + chr(10), encoding="utf-8")
+    real_open = helper.os.open
+    real_lstat = helper.os.lstat
+    real_fstat = helper.os.fstat
+    monkeypatch.setattr(helper.os, "lstat", lambda path: type("Info", (), {
+        "st_mode": helper.stat.S_IFDIR | 0o755, "st_uid": 0
+    })() if path in {"/etc", "/etc/caddy"} else real_lstat(path))
+    monkeypatch.setattr(helper.os, "open", lambda path, flags: real_open(config, flags)
+                        if path == "/etc/caddy/Caddyfile" else real_open(path, flags))
+    monkeypatch.setattr(helper.os, "fstat", lambda fd: type("Info", (), {
+        "st_mode": helper.stat.S_IFREG | 0o640, "st_uid": 0,
+        "st_nlink": 1, "st_size": config.stat().st_size
+    })())
+    assert helper._caddy_public_hostname() == "smarty.example.net"
+    monkeypatch.setattr(helper.os, "open", real_open)
+    monkeypatch.setattr(helper.os, "lstat", real_lstat)
+    monkeypatch.setattr(helper.os, "fstat", real_fstat)
+
+
+def test_caddy_public_hostname_fails_closed_when_multiple_sites(monkeypatch, tmp_path):
+    config = tmp_path / "Caddyfile"
+    config.write_text("one.example.net {" + chr(10) + "}" + chr(10) + "two.example.net {" + chr(10) + "}" + chr(10), encoding="utf-8")
+    real_open = helper.os.open
+    real_lstat = helper.os.lstat
+    monkeypatch.setattr(helper.os, "lstat", lambda path: type("Info", (), {
+        "st_mode": helper.stat.S_IFDIR | 0o755, "st_uid": 0
+    })() if path in {"/etc", "/etc/caddy"} else real_lstat(path))
+    monkeypatch.setattr(helper.os, "open", lambda path, flags: real_open(config, flags)
+                        if path == "/etc/caddy/Caddyfile" else real_open(path, flags))
+    monkeypatch.setattr(helper.os, "fstat", lambda fd: type("Info", (), {
+        "st_mode": helper.stat.S_IFREG | 0o640, "st_uid": 0,
+        "st_nlink": 1, "st_size": config.stat().st_size
+    })())
+    assert helper._caddy_public_hostname() == ""
 
 
 def test_vpn_status_reports_xray_binary_and_service(monkeypatch):
     monkeypatch.setattr(helper.shutil, "which",
                         lambda command: "/usr/local/bin/xray" if command == "xray" else None)
     monkeypatch.setattr(helper, "_unit_state", lambda unit: "active")
+    summary = {"config_status": "readable", "inbounds": [
+        {"protocol": "vless", "listen": "127.0.0.1", "port": 10001,
+         "network": "ws", "security": "none", "path": "/vless"}
+    ]}
+    monkeypatch.setattr(helper, "_xray_config_summary", lambda: summary)
+    # Keep this unit test independent of a real /etc/caddy/Caddyfile.
+    monkeypatch.setattr(helper, "_caddy_public_hostname", lambda: "")
     status = helper.vpn_status()
-    assert status["xray"] == {"installed": True, "service": "active"}
+    assert status["xray"] == {"installed": True, "service": "active",
+                              "public_hostname": "", **summary}
 
 
 def test_vpn_status_reports_wireguard_interfaces(monkeypatch):
@@ -141,7 +277,9 @@ def test_vpn_status_reports_wireguard_interfaces(monkeypatch):
     assert status["wireguard"]["installed"] is True
     assert status["wireguard"]["interfaces"] == [{"name": "wg0", "status": "active"}]
     assert status["openvpn"] == {"installed": False, "instances": []}
-    assert status["xray"] == {"installed": False, "service": "not-installed"}
+    assert status["xray"] == {"installed": False, "service": "not-installed",
+                              "config_status": "unavailable", "inbounds": [],
+                              "public_hostname": ""}
 
 
 def test_wireguard_install_refuses_existing_config(monkeypatch, tmp_path):
@@ -356,3 +494,180 @@ def test_xray_install_uses_pinned_official_installer_in_transient_service(monkey
 def test_xray_action_rejects_unexpected_fields():
     with pytest.raises(SystemExit):
         helper.handle_xray_action({"action": "xray_install", "domain": "example.com"})
+
+
+
+def test_xray_profile_requires_live_registered_identity(tmp_path, monkeypatch):
+    _prepare_xray_state_dir(monkeypatch, tmp_path)
+    monkeypatch.setattr(helper, "_load_xray_clients", lambda: [{
+        "name": "phone01", "protocol": "vless",
+        "id": "00000000-0000-4000-8000-000000000001"
+    }])
+    monkeypatch.setattr(helper, "_xray_config_has_client", lambda protocol, client_id: True)
+    monkeypatch.setattr(helper, "_xray_config_summary", lambda: {
+        "config_status": "readable",
+        "inbounds": [{"protocol": "vless", "listen": "127.0.0.1", "port": 10001,
+                      "network": "ws", "security": "none", "path": "/vless"}]
+    })
+    monkeypatch.setattr(helper, "_caddy_public_hostname", lambda: "vpn.example.net")
+    result = helper.xray_get_client_profile("phone01")
+    assert result == {
+        "name": "phone01", "protocol": "vless",
+        "id": "00000000-0000-4000-8000-000000000001",
+        "hostname": "vpn.example.net", "path": "/vless", "port": 443
+    }
+
+
+def test_xray_profile_refuses_registry_only_identity(tmp_path, monkeypatch):
+    _prepare_xray_state_dir(monkeypatch, tmp_path)
+    monkeypatch.setattr(helper, "_load_xray_clients", lambda: [{
+        "name": "phone01", "protocol": "vless",
+        "id": "00000000-0000-4000-8000-000000000001"
+    }])
+    monkeypatch.setattr(helper, "_xray_config_has_client", lambda protocol, client_id: False)
+    with pytest.raises(SystemExit):
+        helper.xray_get_client_profile("phone01")
+
+
+
+def _managed_xray_test_config():
+    return {
+        "inbounds": [{
+            "tag": "vmess-ws", "listen": "127.0.0.1", "port": 10000,
+            "protocol": "vmess",
+            "settings": {"clients": [{"id": "11111111-1111-4111-8111-111111111111", "alterId": 0}]},
+            "streamSettings": {"network": "ws", "security": "none",
+                               "wsSettings": {"path": "/vmess"}}
+        }, {
+            "tag": "vless-ws", "listen": "127.0.0.1", "port": 10001,
+            "protocol": "vless",
+            "settings": {"decryption": "none", "clients": [
+                {"id": "22222222-2222-4222-8222-222222222222", "email": "original"}
+            ]},
+            "streamSettings": {"network": "ws", "security": "none",
+                               "wsSettings": {"path": "/vless"}}
+        }]
+    }
+
+
+def _fake_xray_metadata():
+    from types import SimpleNamespace
+    return SimpleNamespace(st_uid=0, st_gid=0, st_mode=stat.S_IFREG | 0o640, st_ino=123, st_mtime_ns=456)
+
+
+def test_xray_create_client_adds_only_manager_client_and_preserves_original(tmp_path, monkeypatch):
+    _prepare_xray_state_dir(monkeypatch, tmp_path)
+    config = _managed_xray_test_config()
+    applied = []
+    monkeypatch.setattr(helper, "_read_xray_config_document",
+                        lambda: (b'{"original":true}\n', json.loads(json.dumps(config)), _fake_xray_metadata()))
+    monkeypatch.setattr(helper, "_apply_xray_config_change",
+                        lambda candidate, raw, metadata: applied.append(candidate) or "/protected/backup.bak")
+    result = helper.xray_create_client("phone01", "vmess")
+    assert result == {"created": True, "name": "phone01", "protocol": "vmess",
+                      "backup": "backup.bak"}
+    clients = applied[0]["inbounds"][0]["settings"]["clients"]
+    assert clients[0]["id"] == "11111111-1111-4111-8111-111111111111"
+    assert clients[1]["alterId"] == 0
+    assert len(clients[1]["id"]) == 36
+    assert _load_rows_for_test(helper, "phone01")["protocol"] == "vmess"
+
+
+def _load_rows_for_test(helper_module, name):
+    return next(row for row in helper_module._load_xray_clients() if row["name"] == name)
+
+
+def test_xray_revoke_removes_only_managed_uuid_and_preserves_original(tmp_path, monkeypatch):
+    _prepare_xray_state_dir(monkeypatch, tmp_path)
+    helper._save_xray_clients([{
+        "name": "phone01", "protocol": "vless",
+        "id": "33333333-3333-4333-8333-333333333333"
+    }])
+    config = _managed_xray_test_config()
+    config["inbounds"][1]["settings"]["clients"].append({
+        "id": "33333333-3333-4333-8333-333333333333", "email": "phone01"
+    })
+    applied = []
+    monkeypatch.setattr(helper, "_read_xray_config_document",
+                        lambda: (b'{"original":true}\n', json.loads(json.dumps(config)), _fake_xray_metadata()))
+    monkeypatch.setattr(helper, "_apply_xray_config_change",
+                        lambda candidate, raw, metadata: applied.append(candidate) or "/protected/backup.bak")
+    assert helper.xray_revoke_client("phone01") == {"revoked": True, "name": "phone01"}
+    remaining = applied[0]["inbounds"][1]["settings"]["clients"]
+    assert remaining == [{"id": "22222222-2222-4222-8222-222222222222", "email": "original"}]
+    assert helper._load_xray_clients() == []
+
+
+def test_xray_client_mutation_refuses_ambiguous_inbounds(tmp_path, monkeypatch):
+    _prepare_xray_state_dir(monkeypatch, tmp_path)
+    config = _managed_xray_test_config()
+    config["inbounds"].append(json.loads(json.dumps(config["inbounds"][0])))
+    monkeypatch.setattr(helper, "_read_xray_config_document",
+                        lambda: (b'{}', config, _fake_xray_metadata()))
+    monkeypatch.setattr(helper, "_apply_xray_config_change",
+                        lambda *args: pytest.fail("ambiguous config must not be written"))
+    with pytest.raises(SystemExit):
+        helper.xray_create_client("phone01", "vmess")
+    assert helper._load_xray_clients() == []
+
+
+
+def test_xray_apply_restores_original_bytes_if_atomic_replace_reports_failure(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    config_path = tmp_path / "config.json"
+    config_path.write_text('{"old":true}\n', encoding="utf-8")
+    original = b'{"old":true}\n'
+    metadata = SimpleNamespace(
+        st_uid=os.geteuid(), st_gid=os.getegid(),
+        st_mode=stat.S_IFREG | 0o600, st_ino=123, st_mtime_ns=456
+    )
+    monkeypatch.setattr(helper, "XRAY_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(helper, "_read_xray_config_document",
+                        lambda: (original, {"inbounds": []}, metadata))
+    monkeypatch.setattr(helper, "_xray_validate_candidate", lambda path: None)
+    monkeypatch.setattr(helper, "_save_xray_backup", lambda raw: "/protected/backup.bak")
+    writes = []
+
+    def fail_first_write(raw, info):
+        writes.append(raw)
+        if len(writes) == 1:
+            raise SystemExit(1)
+
+    monkeypatch.setattr(helper, "_atomic_xray_config_write", fail_first_write)
+    with pytest.raises(SystemExit):
+        helper._apply_xray_config_change({"inbounds": []}, original, metadata)
+    assert len(writes) == 2
+    assert writes[1] == original
+
+
+
+def test_xray_candidate_is_valid_json_with_real_newline_before_apply(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    config_path = tmp_path / "config.json"
+    config_path.write_text('{"inbounds":[]}\n', encoding="utf-8")
+    original = config_path.read_bytes()
+    metadata = SimpleNamespace(
+        st_uid=os.geteuid(), st_gid=os.getegid(),
+        st_mode=stat.S_IFREG | 0o600, st_ino=123, st_mtime_ns=456
+    )
+    monkeypatch.setattr(helper, "XRAY_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(helper, "_read_xray_config_document",
+                        lambda: (original, {"inbounds": []}, metadata))
+    validated = []
+    def validate_candidate(path):
+        raw = open(path, "rb").read()
+        validated.append(raw)
+        assert raw.endswith(b"\n")
+        assert json.loads(raw.decode("utf-8")) == {"inbounds": []}
+    monkeypatch.setattr(helper, "_xray_validate_candidate", validate_candidate)
+    monkeypatch.setattr(helper, "_save_xray_backup", lambda raw: "/protected/backup.bak")
+    writes = []
+    monkeypatch.setattr(helper, "_atomic_xray_config_write",
+                        lambda raw, info: writes.append(raw))
+    monkeypatch.setattr(helper.subprocess, "run", lambda *a, **k:
+                        helper.subprocess.CompletedProcess(a[0], 0, "", ""))
+    monkeypatch.setattr(helper, "_unit_state", lambda unit: "active")
+    result = helper._apply_xray_config_change({"inbounds": []}, original, metadata)
+    assert result == "/protected/backup.bak"
+    assert len(validated) == 1 and len(writes) == 1
+    assert json.loads(writes[0].decode("utf-8")) == {"inbounds": []}

@@ -46,6 +46,40 @@
     <div class="section-heading"><div><h2>Xray-core</h2><p class="muted">Engine for VLESS and VMess</p></div><span class="vpn-state {{ 'available' if vpn.xray.installed else 'missing' }}">{{ 'Installed' if vpn.xray.installed else 'Not installed' }}</span></div>
     {% if vpn.xray.installed %}
       <div class="vpn-instance"><b>System service</b><span class="vpn-state {{ 'available' if vpn.xray.service == 'active' else 'missing' }}">{{ vpn.xray.service|title }}</span></div>
+      <div class="vpn-instance"><b>Configuration inspection</b><span class="vpn-state {{ 'available' if vpn.xray.config_status == 'readable' else 'missing' }}">{{ vpn.xray.config_status|title }}</span></div>
+      {% if vpn.xray.inbounds %}
+        <h3>Detected Xray inbounds</h3>
+        <div class="vpn-list">{% for inbound in vpn.xray.inbounds %}
+          <div class="vpn-instance">
+            <div><b>{{ inbound.protocol|upper }} · {{ inbound.network|upper }}</b><small class="muted">{{ inbound.listen }}:{{ inbound.port }}{% if inbound.path %} · {{ inbound.path }}{% endif %}</small></div>
+            <span class="vpn-state">{{ inbound.security|upper }}</span>
+          </div>
+        {% endfor %}</div>
+      {% elif vpn.xray.config_status == 'readable' %}
+        <p class="empty">The Xray configuration is readable, but it contains no inbound listeners.</p>
+      {% else %}
+        <p class="muted">The manager could not safely inspect the Xray configuration. No configuration changes were made.</p>
+      {% endif %}
+      <hr>
+      <h3>Xray client management</h3>
+      <p class="notice"><b>Existing listeners will be preserved.</b><span>New clients are added only to one unambiguous existing local WebSocket inbound. Before applying a change, the manager validates a candidate config with Xray and creates a protected backup. Applying a change restarts Xray briefly; existing connections may reconnect.</span></p>
+      <form method="post" action="{{ url_for('create_xray_client') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label for="xray-name">Client name</label><input id="xray-name" name="name" maxlength="31" pattern="[a-z][a-z0-9_-]{0,30}" required placeholder="phone01">
+        <label for="xray-protocol">Protocol</label><select id="xray-protocol" name="protocol" required><option value="vless">VLESS</option><option value="vmess">VMess</option></select>
+        <button type="submit">Create Xray client</button>
+      </form>
+      {% if xray_clients %}
+        <h3>Managed Xray clients</h3>
+        <div class="vpn-list">{% for client in xray_clients %}
+          <div class="vpn-instance">
+            <div><b>{{ client.name }}</b><small class="muted">{{ client.protocol|upper }} · Live Xray client</small></div>
+            <div class="inline"><a href="{{ url_for('download_xray_profile', name=client.name) }}">Download</a><a href="{{ url_for('xray_profile_qr', name=client.name) }}" target="_blank" rel="noopener">QR code</a>
+              <form method="post" action="{{ url_for('revoke_xray_client', name=client.name) }}" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="secondary" type="submit">Revoke</button></form>
+            </div>
+          </div>
+        {% endfor %}</div>
+      {% else %}<p class="empty">No manager-created Xray clients yet. Existing manually configured clients are not listed or managed here.</p>{% endif %}
     {% else %}
       <p class="muted">Install the official Xray-core engine. This does not create VLESS/VMess listeners, obtain certificates, change DNS or alter firewall rules.</p>
       <form method="post" action="{{ url_for('install_xray') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit">Install Xray-core</button></form>

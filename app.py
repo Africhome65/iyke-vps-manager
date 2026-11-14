@@ -17,6 +17,8 @@ from flask_limiter.util import get_remote_address
 from flask_wtf.csrf import CSRFProtect
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from xray_profiles import build_vless_uri, build_vmess_uri
+
 USERNAME_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,30}\$?$")
 HELPER = "/usr/local/sbin/iyke-vps-helper"
 
@@ -287,9 +289,21 @@ def create_app(test_config=None):
                       "openvpn": {"installed": False, "instances": []},
                       "xray": {"installed": False, "service": "not-installed"}}
             flash(str(exc), "error")
-        # Older helper responses and test doubles may not include Xray yet.
-        status.setdefault("xray", {"installed": False, "service": "not-installed"})
+        # Older helper responses and test doubles may omit newer Xray metadata.
+        xray_status = status.setdefault(
+            "xray", {"installed": False, "service": "not-installed"}
+        )
+        xray_status.setdefault("config_status", "unavailable")
+        xray_status.setdefault("inbounds", [])
         peers = []
+        xray_clients = []
+        if status.get("xray", {}).get("installed"):
+            try:
+                xray_clients = json.loads(run_helper("xray_clients") or "[]")
+                if not isinstance(xray_clients, list):
+                    xray_clients = []
+            except (RuntimeError, json.JSONDecodeError) as exc:
+                flash(str(exc), "error")
         public_endpoint = ""
         try:
             endpoint_info = json.loads(run_helper("wireguard_public_endpoint") or "{}")
@@ -307,6 +321,7 @@ def create_app(test_config=None):
             except (RuntimeError, json.JSONDecodeError) as exc:
                 flash(str(exc), "error")
         return render_template("vpn.html", vpn=status, peers=peers,
+                               xray_clients=xray_clients,
                                public_endpoint=public_endpoint)
 
 
@@ -319,6 +334,84 @@ def create_app(test_config=None):
             audit("xray_installed", "Installed Xray-core using the pinned official installer")
             flash("Xray-core is installed. No VLESS/VMess listeners or firewall rules were configured.", "success")
             flash(f"Xray service state: {result.get('service', 'unknown')}", "success")
+        except (RuntimeError, json.JSONDecodeError) as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("vpn_services"))
+
+    @app.post("/vpn/xray/clients")
+    @login_required
+    def create_xray_client():
+        name = request.form.get("name", "").strip().lower()
+        protocol = request.form.get("protocol", "").strip().lower()
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name) or name in {"root", "server", "ca"}:
+            flash("Use a client name with lowercase letters, numbers, hyphens or underscores.", "error")
+            return redirect(url_for("vpn_services"))
+        if protocol not in {"vmess", "vless"}:
+            abort(400)
+        try:
+            result = json.loads(run_helper("xray_create_client", timeout=150, name=name, protocol=protocol) or "{}")
+            if result.get("created") is not True or result.get("name") != name or result.get("protocol") != protocol:
+                raise RuntimeError("Xray client creation could not be verified")
+            audit("xray_client_created", f"Created Xray {protocol.upper()} client {name}")
+            flash(f"Xray {protocol.upper()} client {name} created and activated. Download its profile or open its QR code from the Xray client list.", "success")
+        except (RuntimeError, json.JSONDecodeError) as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("vpn_services"))
+
+    def xray_profile_uri(name):
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name) or name in {"root", "server", "ca"}:
+            abort(404)
+        try:
+            data = json.loads(run_helper("xray_get_profile", name=name) or "{}")
+            if (data.get("name") != name or data.get("protocol") not in {"vmess", "vless"}
+                    or not isinstance(data.get("id"), str)
+                    or not isinstance(data.get("hostname"), str)
+                    or not isinstance(data.get("path"), str) or data.get("port") != 443):
+                raise RuntimeError("Xray profile data could not be verified")
+            builder = build_vmess_uri if data["protocol"] == "vmess" else build_vless_uri
+            return builder(data["id"], data["hostname"], data["path"], name, port=data["port"]), data["protocol"]
+        except (RuntimeError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+            abort(404, description="Xray client profile is unavailable")
+
+    @app.get("/vpn/xray/clients/<name>/profile")
+    @login_required
+    def download_xray_profile(name):
+        profile, protocol = xray_profile_uri(name)
+        response = Response(profile + "\n", mimetype="text/plain; charset=utf-8")
+        response.headers["Content-Disposition"] = f'attachment; filename="{name}-{protocol}.txt"'
+        response.headers["Cache-Control"] = "no-store, private, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        return response
+
+    @app.get("/vpn/xray/clients/<name>/qr")
+    @login_required
+    def xray_profile_qr(name):
+        try:
+            import io
+            import qrcode
+            from qrcode.image.svg import SvgPathImage
+            profile, _ = xray_profile_uri(name)
+            image = qrcode.make(profile, image_factory=SvgPathImage, border=4)
+            output = io.BytesIO()
+            image.save(output)
+            response = Response(output.getvalue(), mimetype="image/svg+xml")
+            response.headers["Cache-Control"] = "no-store, private, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            return response
+        except (ImportError, RuntimeError):
+            abort(404, description="Xray client QR code is unavailable")
+
+    @app.post("/vpn/xray/clients/<name>/revoke")
+    @login_required
+    def revoke_xray_client(name):
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name) or name in {"root", "server", "ca"}:
+            abort(404)
+        try:
+            result = json.loads(run_helper("xray_revoke_client", timeout=150, name=name) or "{}")
+            if result.get("revoked") is not True or result.get("name") != name:
+                raise RuntimeError("Xray client revocation could not be verified")
+            audit("xray_client_revoked", f"Revoked Xray client {name}")
+            flash(f"Xray client {name} revoked from the live configuration.", "success")
         except (RuntimeError, json.JSONDecodeError) as exc:
             flash(str(exc), "error")
         return redirect(url_for("vpn_services"))
