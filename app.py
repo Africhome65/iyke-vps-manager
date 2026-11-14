@@ -306,8 +306,17 @@ def create_app(test_config=None):
                     peers = []
             except (RuntimeError, json.JSONDecodeError) as exc:
                 flash(str(exc), "error")
+        openvpn_inventory = {"available": False, "reason": "OpenVPN is not installed", "clients": []}
+        if status.get("openvpn", {}).get("installed"):
+            try:
+                openvpn_inventory = json.loads(run_helper("openvpn_clients") or "{}")
+                if not isinstance(openvpn_inventory, dict):
+                    openvpn_inventory = {"available": False, "reason": "Invalid inventory response", "clients": []}
+            except (RuntimeError, json.JSONDecodeError) as exc:
+                openvpn_inventory = {"available": False, "reason": str(exc), "clients": []}
         return render_template("vpn.html", vpn=status, peers=peers,
-                               public_endpoint=public_endpoint)
+                               public_endpoint=public_endpoint,
+                               openvpn_inventory=openvpn_inventory)
 
 
 
