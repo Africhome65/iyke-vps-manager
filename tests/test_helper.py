@@ -1824,3 +1824,18 @@ def test_openvpn_profile_rejects_server_certificate_eku(monkeypatch):
     monkeypatch.setattr(helper, "_openvpn_certificate_is_client", lambda path: False)
     with pytest.raises(SystemExit):
         helper.openvpn_get_profile("phone01", "vpn.example.com")
+
+
+def test_hysteria_start_requires_privileged_helper(monkeypatch):
+    monkeypatch.setattr(helper.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(helper.subprocess, "run",
+                        lambda *a, **k: pytest.fail("must not invoke systemd without root"))
+    with pytest.raises(SystemExit):
+        helper.hysteria_start_service()
+
+
+def test_hysteria_start_action_requires_exact_request_shape():
+    with pytest.raises(SystemExit):
+        helper.handle_hysteria_action({
+            "action": "hysteria_start_service", "udp_port": 8443
+        })
