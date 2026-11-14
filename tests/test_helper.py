@@ -912,6 +912,34 @@ def test_hysteria_install_uses_pinned_official_installer_in_transient_service(mo
     assert kwargs["timeout"] == 330
 
 
+def test_hysteria_validate_accepts_separate_udp_ports_without_side_effects():
+    result = helper.hysteria_validate("VPN.Example.com.", "53, 8443")
+    assert result == {
+        "valid": True, "domain": "vpn.example.com", "udp_ports": [53, 8443],
+        "listener_strategy": "separate-listeners", "service_changed": False,
+        "firewall_changed": False, "dns_checked": False, "ports_checked": False,
+    }
+
+
+@pytest.mark.parametrize("domain,ports", [
+    ("localhost", "53"), ("bad..example.com", "53"),
+    ("-bad.example.com", "53"), ("example.com", "0"),
+    ("example.com", "65536"), ("example.com", "53,53"),
+    ("example.com", "53,,8443"), ("example.com", "53-8443"),
+    ("example.com", "53,8443,1,2,3,4,5,6,7"),
+])
+def test_hysteria_validate_rejects_invalid_inputs(domain, ports):
+    with pytest.raises(SystemExit):
+        helper.hysteria_validate(domain, ports)
+
+
+def test_hysteria_action_validates_exact_request_shape(capsys):
+    assert helper.handle_hysteria_action({
+        "action": "hysteria_validate", "domain": "vpn.example.com", "ports": "53,8443"
+    })
+    assert json.loads(capsys.readouterr().out)["udp_ports"] == [53, 8443]
+
+
 def test_hysteria_action_rejects_unexpected_fields():
     with pytest.raises(SystemExit):
         helper.handle_hysteria_action({"action": "hysteria_install", "domain": "example.com"})
