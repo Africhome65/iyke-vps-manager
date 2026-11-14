@@ -2076,3 +2076,15 @@ def test_hysteria_http01_firewall_adds_only_tcp80(tmp_path, monkeypatch):
         ["/usr/sbin/ufw", "allow", "80/tcp", "comment",
          "Iyke VPS Manager Hysteria ACME HTTP-01"]
     ]
+
+
+def test_hysteria_start_refuses_low_udp_port_without_bind_capability(tmp_path, monkeypatch, capsys):
+    config_path, unit_path = _prepare_hysteria_start_files(tmp_path, monkeypatch)
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["listen"] = ":443"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    monkeypatch.setattr(helper.subprocess, "run",
+                        lambda *a, **k: pytest.fail("must reject missing capability before systemd"))
+    with pytest.raises(SystemExit):
+        helper.hysteria_start_service()
+    assert "low-port bind capability" in capsys.readouterr().err
