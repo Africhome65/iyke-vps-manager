@@ -481,6 +481,31 @@ def create_app(test_config=None):
             flash(str(exc), "error")
         return redirect(url_for("vpn_services"))
 
+
+    @app.post("/vpn/hysteria/firewall/open")
+    @login_required
+    def open_hysteria_firewall():
+        try:
+            result = json.loads(run_helper("hysteria_firewall_open_udp", timeout=90) or "{}")
+            if (result.get("opened") is not True or result.get("firewall") != "ufw"
+                    or not isinstance(result.get("udp_port"), int)
+                    or not isinstance(result.get("firewall_changed"), bool)):
+                raise RuntimeError("The Hysteria firewall rule could not be verified")
+            audit(
+                "hysteria_firewall_rule",
+                f"UFW UDP/{result['udp_port']} "
+                + ("rule added" if result["firewall_changed"] else "already allowed"),
+            )
+            flash(
+                f"UFW already allows UDP/{result['udp_port']}."
+                if result.get("already_allowed") else
+                f"UFW now allows UDP/{result['udp_port']} for Hysteria 2.",
+                "success",
+            )
+        except (RuntimeError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("vpn_services"))
+
     @app.post("/vpn/hysteria/install")
     @login_required
     def install_hysteria():
