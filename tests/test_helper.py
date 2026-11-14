@@ -1922,7 +1922,7 @@ def _prepare_hysteria_start_files(tmp_path, monkeypatch):
     unit_path.write_text(
         "[Unit]\nDescription=Iyke VPS Manager Hysteria 2 server\n"
         "[Service]\nUser=hysteria\nGroup=hysteria\n"
-        "ExecStart=/usr/local/bin/hysteria server --config /etc/hysteria/iyke.yaml\n",
+        f"ExecStart=/usr/local/bin/hysteria server --config {config_path}\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(helper, "HYSTERIA_CONFIG_PATH", str(config_path))
