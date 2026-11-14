@@ -392,9 +392,13 @@ def create_app(test_config=None):
     @app.get("/vpn/xray/clients/<name>/profile")
     @login_required
     def download_xray_profile(name):
-        profile, protocol = xray_profile_uri(name)
-        response = Response(profile + "\n", mimetype="text/plain; charset=utf-8")
-        response.headers["Content-Disposition"] = f'attachment; filename="{name}-{protocol}.txt"'
+        profiles, protocol = xray_profile_uris(name)
+        content = "\\n".join(
+            f"# {protocol.upper()} WebSocket port {port} ({'TLS' if port == 443 else 'plain HTTP'})\\n{uri}"
+            for port, uri in profiles
+        ) + "\\n"
+        response = Response(content, mimetype="text/plain; charset=utf-8")
+        response.headers["Content-Disposition"] = f'attachment; filename="{name}-{protocol}-80-443.txt'
         response.headers["Cache-Control"] = "no-store, private, max-age=0"
         response.headers["Pragma"] = "no-cache"
         return response
