@@ -367,9 +367,9 @@ def openvpn_create_client(name):
     pki, index_text = _openvpn_unique_pki(require_ca_key=True)
     if any(row["common_name"] == name for row in _openvpn_index_clients(index_text)):
         fail("An OpenVPN certificate with that client name already exists")
-    cert_path = os.path.join(pki, "issued", name + ".crt")
     key_path = os.path.join(pki, "private", name + ".key")
-    if os.path.lexists(cert_path) or os.path.lexists(key_path):
+    if (os.path.lexists(os.path.join(pki, "issued", name + ".crt"))
+            or os.path.lexists(key_path)):
         fail("Client certificate or key file already exists; refusing to overwrite")
     easyrsa = _openvpn_easyrsa_path()
     env = {
@@ -388,6 +388,9 @@ def openvpn_create_client(name):
         fail("Easy-RSA client issuance failed or timed out")
     if result.returncode != 0:
         fail("Easy-RSA client issuance failed")
+    cert_path = os.path.join(pki, "issued", name + ".crt")
+    if not _openvpn_certificate_is_client(cert_path):
+        fail("Issued certificate is not verified for TLS client authentication")
     cert_fd = _openvpn_trusted_file(cert_path, 1024 * 1024)
     key_fd = _openvpn_trusted_file(key_path, 1024 * 1024)
     if cert_fd is None or key_fd is None:
