@@ -332,6 +332,36 @@ def create_app(test_config=None):
             flash(str(exc), "error")
         return redirect(url_for("vpn_services"))
 
+
+    @app.get("/vpn/openvpn/clients/<name>/profile")
+    @login_required
+    def download_openvpn_profile(name):
+        name = name.strip().lower()
+        endpoint = request.args.get("endpoint", "").strip()
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name) or name in {"root", "server", "ca"}:
+            abort(404)
+        if not endpoint or len(endpoint) > 253:
+            abort(400, "Provide this VPS public DNS name or IP address")
+        try:
+            result = json.loads(run_helper(
+                "openvpn_get_profile", timeout=30, name=name, endpoint=endpoint
+            ) or "{}")
+            profile = result.get("profile")
+            if result.get("name") != name or not isinstance(profile, str) or len(profile) > 4 * 1024 * 1024:
+                raise RuntimeError("OpenVPN profile could not be verified")
+            if not profile.startswith("client\\ndev tun\\n") or "<key>" not in profile:
+                raise RuntimeError("OpenVPN profile format could not be verified")
+            audit("openvpn_profile_downloaded", f"Downloaded OpenVPN profile for {name}")
+            response = Response(profile, mimetype="application/x-openvpn-profile")
+            response.headers["Content-Disposition"] = f'attachment; filename="{name}.ovpn"'
+            response.headers["Cache-Control"] = "no-store, private, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+            return response
+        except (RuntimeError, json.JSONDecodeError) as exc:
+            flash(str(exc), "error")
+            return redirect(url_for("vpn_services"))
+
     @app.post("/vpn/openvpn/clients")
     @login_required
     def create_openvpn_client():
