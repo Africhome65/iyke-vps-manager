@@ -41,6 +41,16 @@
       {% if vpn.openvpn.instances %}<div class="vpn-list">{% for item in vpn.openvpn.instances %}<div class="vpn-instance"><div><b>{{ item.name }}</b><small class="muted">CRL: {{ 'signature and active process verified' if item.crl_runtime_verified else ('configured; runtime not verified' if item.crl_configured and item.crl_file_present else ('configured; missing, unsafe or unverified' if item.crl_configured else 'not configured')) }}</small></div><span class="vpn-state {{ 'available' if item.status == 'active' else 'missing' }}">{{ item.status|title }}</span></div>{% endfor %}</div>
       {% else %}<p class="empty">OpenVPN is installed, but no server configuration files were found.</p>{% endif %}
       <hr>
+      {% if openvpn_inventory.available %}
+        <h3>Issue a client certificate</h3>
+        <form method="post" action="{{ url_for('create_openvpn_client') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <label for="ovpn-name">Client name</label>
+          <input id="ovpn-name" name="name" maxlength="31" pattern="[a-z][a-z0-9_-]{0,30}" required placeholder="phone01">
+          <button type="submit">Issue certificate</button>
+        </form>
+        <p class="muted">Creates a unique client certificate and private key in the protected Easy-RSA PKI. The private key is not shown or sent to the browser yet.</p>
+      {% endif %}
       <h3>Certificate inventory (read-only)</h3>
       {% if openvpn_inventory.available %}
         {% if openvpn_inventory.clients %}
