@@ -1381,10 +1381,23 @@ def vpn_status():
     custom_hysteria_config = os.path.isfile(HYSTERIA_CONFIG_PATH)
     custom_hysteria_unit = os.path.isfile(HYSTERIA_UNIT_PATH)
     hysteria_unit = "iyke-hysteria.service" if custom_hysteria_unit else "hysteria-server.service"
+    hysteria_tls_mode = "unknown"
+    if custom_hysteria_config:
+        try:
+            with open(HYSTERIA_CONFIG_PATH, "r", encoding="utf-8") as source:
+                hysteria_config = json.load(source)
+            hysteria_tls_mode = (
+                "acme-http01" if isinstance(hysteria_config.get("acme"), dict)
+                and hysteria_config["acme"].get("type") == "http" else
+                "manual" if isinstance(hysteria_config.get("tls"), dict) else "unknown"
+            )
+        except (OSError, ValueError, AttributeError):
+            pass
     hysteria = {
         "installed": hysteria_binary is not None,
         "service": _unit_state(hysteria_unit) if hysteria_binary else "not-installed",
         "service_unit": hysteria_unit if hysteria_binary else "",
+        "tls_mode": hysteria_tls_mode,
         "config_status": (
             "configured" if custom_hysteria_config else
             "example" if os.path.isfile("/etc/hysteria/config.yaml") else "missing"
