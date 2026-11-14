@@ -290,6 +290,14 @@ def create_app(test_config=None):
         # Older helper responses and test doubles may not include Xray yet.
         status.setdefault("xray", {"installed": False, "service": "not-installed"})
         peers = []
+        xray_clients = []
+        if status.get("xray", {}).get("installed"):
+            try:
+                xray_clients = json.loads(run_helper("xray_clients") or "[]")
+                if not isinstance(xray_clients, list):
+                    xray_clients = []
+            except (RuntimeError, json.JSONDecodeError) as exc:
+                flash(str(exc), "error")
         public_endpoint = ""
         try:
             endpoint_info = json.loads(run_helper("wireguard_public_endpoint") or "{}")
@@ -307,6 +315,7 @@ def create_app(test_config=None):
             except (RuntimeError, json.JSONDecodeError) as exc:
                 flash(str(exc), "error")
         return render_template("vpn.html", vpn=status, peers=peers,
+                               xray_clients=xray_clients,
                                public_endpoint=public_endpoint)
 
 
@@ -319,6 +328,41 @@ def create_app(test_config=None):
             audit("xray_installed", "Installed Xray-core using the pinned official installer")
             flash("Xray-core is installed. No VLESS/VMess listeners or firewall rules were configured.", "success")
             flash(f"Xray service state: {result.get('service', 'unknown')}", "success")
+        except (RuntimeError, json.JSONDecodeError) as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("vpn_services"))
+
+    @app.post("/vpn/xray/clients")
+    @login_required
+    def create_xray_client():
+        name = request.form.get("name", "").strip().lower()
+        protocol = request.form.get("protocol", "").strip().lower()
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name) or name in {"root", "server", "ca"}:
+            flash("Use a client name with lowercase letters, numbers, hyphens or underscores.", "error")
+            return redirect(url_for("vpn_services"))
+        if protocol not in {"vmess", "vless"}:
+            abort(400)
+        try:
+            result = json.loads(run_helper("xray_create_client", name=name, protocol=protocol) or "{}")
+            if result.get("created") is not True or result.get("name") != name or result.get("protocol") != protocol:
+                raise RuntimeError("Xray client creation could not be verified")
+            audit("xray_client_created", f"Created Xray {protocol.upper()} client {name}")
+            flash(f"Xray {protocol.upper()} client {name} created. Listener configuration and connection profiles are the next step.", "success")
+        except (RuntimeError, json.JSONDecodeError) as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("vpn_services"))
+
+    @app.post("/vpn/xray/clients/<name>/revoke")
+    @login_required
+    def revoke_xray_client(name):
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name) or name in {"root", "server", "ca"}:
+            abort(404)
+        try:
+            result = json.loads(run_helper("xray_revoke_client", name=name) or "{}")
+            if result.get("revoked") is not True or result.get("name") != name:
+                raise RuntimeError("Xray client revocation could not be verified")
+            audit("xray_client_revoked", f"Revoked Xray client {name}")
+            flash(f"Xray client {name} removed from the protected client registry.", "success")
         except (RuntimeError, json.JSONDecodeError) as exc:
             flash(str(exc), "error")
         return redirect(url_for("vpn_services"))
