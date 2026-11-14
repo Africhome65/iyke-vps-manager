@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import urllib.request
+import uuid
 from contextlib import contextmanager
 
 NAME = re.compile(r"^[a-z_][a-z0-9_-]{0,30}\$?$")
@@ -779,13 +780,176 @@ def xray_install():
     }
 
 
+XRAY_CLIENTS_FILE = "xray-clients.json"
+
+
+def _xray_client_lock():
+    check_state_dir()
+    path = state_path("xray-clients.lock")
+    fd = None
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) & 0o077):
+            fail("Xray client lock file is unsafe")
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "r+") as lock_file:
+            fd = None
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            yield
+    except OSError:
+        fail("Unable to lock Xray client registry")
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
+@contextmanager
+def xray_client_lock():
+    with _xray_client_lock():
+        yield
+
+
+def _load_xray_clients():
+    check_state_dir()
+    path = state_path(XRAY_CLIENTS_FILE)
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except FileNotFoundError:
+        return []
+    except OSError:
+        fail("Unable to open Xray client registry")
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) & 0o077
+                or info.st_size > 256 * 1024):
+            fail("Xray client registry file is unsafe")
+        with os.fdopen(fd, "r", encoding="utf-8") as source:
+            fd = -1
+            data = json.load(source)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        fail("Xray client registry is unreadable or corrupted")
+    finally:
+        if fd >= 0:
+            os.close(fd)
+    if not isinstance(data, list) or len(data) > 1000:
+        fail("Xray client registry contains invalid data")
+    seen = set()
+    for row in data:
+        if (not isinstance(row, dict) or set(row) != {"name", "protocol", "id"}
+                or not isinstance(row["name"], str)
+                or not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", row["name"])
+                or row["protocol"] not in {"vmess", "vless"}
+                or not isinstance(row["id"], str)):
+            fail("Xray client registry contains invalid data")
+        try:
+            if str(uuid.UUID(row["id"])) != row["id"]:
+                raise ValueError
+        except (ValueError, AttributeError):
+            fail("Xray client registry contains an invalid client ID")
+        if row["name"] in seen:
+            fail("Xray client registry contains duplicate names")
+        seen.add(row["name"])
+    return data
+
+
+def _save_xray_clients(rows):
+    check_state_dir()
+    fd = None
+    temporary = None
+    try:
+        fd, temporary = tempfile.mkstemp(prefix=".xray-clients-", dir=STATE_DIR)
+        os.fchmod(fd, 0o600)
+        os.fchown(fd, os.geteuid(), os.getegid())
+        with os.fdopen(fd, "w", encoding="utf-8") as target:
+            fd = None
+            json.dump(rows, target, separators=(",", ":"))
+            target.write("\\n")
+            target.flush()
+            os.fsync(target.fileno())
+        os.replace(temporary, state_path(XRAY_CLIENTS_FILE))
+        temporary = None
+        directory_fd = os.open(STATE_DIR, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except OSError:
+        fail("Unable to update Xray client registry")
+    finally:
+        if fd is not None:
+            os.close(fd)
+        if temporary is not None:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+
+
+def xray_list_clients():
+    with xray_client_lock():
+        return [{"name": row["name"], "protocol": row["protocol"]}
+                for row in _load_xray_clients()]
+
+
+def xray_create_client(name, protocol):
+    if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name):
+        fail("Invalid Xray client name")
+    if name in {"root", "server", "ca"}:
+        fail("That Xray client name is reserved")
+    if protocol not in {"vmess", "vless"}:
+        fail("Unsupported Xray client protocol")
+    if not os.path.isfile("/usr/local/bin/xray") or not os.access("/usr/local/bin/xray", os.X_OK):
+        fail("Install Xray-core before creating clients")
+    with xray_client_lock():
+        rows = _load_xray_clients()
+        if any(row["name"] == name for row in rows):
+            fail("An Xray client with that name already exists")
+        if len(rows) >= 1000:
+            fail("The Xray client limit has been reached")
+        client_id = str(uuid.uuid4())
+        rows.append({"name": name, "protocol": protocol, "id": client_id})
+        _save_xray_clients(rows)
+    return {"created": True, "name": name, "protocol": protocol, "id": client_id}
+
+
+def xray_revoke_client(name):
+    if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name):
+        fail("Invalid Xray client name")
+    with xray_client_lock():
+        rows = _load_xray_clients()
+        updated = [row for row in rows if row["name"] != name]
+        if len(updated) == len(rows):
+            fail("Xray client was not found")
+        _save_xray_clients(updated)
+    return {"revoked": True, "name": name}
+
+
 def handle_xray_action(request):
-    if request.get("action") != "xray_install":
-        return False
-    if set(request) != {"action"}:
-        fail("Unexpected request fields")
-    print(json.dumps(xray_install()))
-    return True
+    action = request.get("action")
+    if action == "xray_install":
+        if set(request) != {"action"}:
+            fail("Unexpected request fields")
+        print(json.dumps(xray_install()))
+        return True
+    if action == "xray_clients":
+        if set(request) != {"action"}:
+            fail("Unexpected request fields")
+        print(json.dumps(xray_list_clients()))
+        return True
+    if action == "xray_create_client":
+        if set(request) != {"action", "name", "protocol"}:
+            fail("Unexpected request fields")
+        print(json.dumps(xray_create_client(request["name"], request["protocol"])))
+        return True
+    if action == "xray_revoke_client":
+        if set(request) != {"action", "name"}:
+            fail("Unexpected request fields")
+        print(json.dumps(xray_revoke_client(request["name"])))
+        return True
+    return False
 
 
 def handle_vpn_action(request):
