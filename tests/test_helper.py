@@ -163,6 +163,20 @@ def test_openvpn_clients_discovers_one_trusted_database(tmp_path, monkeypatch):
     }
 
 
+def test_openvpn_clients_rejects_oversized_index(tmp_path, monkeypatch):
+    pki = tmp_path / "pki"
+    for name in ("issued", "private"):
+        (pki / name).mkdir(parents=True, mode=0o700)
+        (pki / name).chmod(0o700)
+    pki.chmod(0o700)
+    index = pki / "index.txt"
+    index.write_text("V" + "x" * (1024 * 1024), encoding="utf-8")
+    index.chmod(0o600)
+    _pretend_root_owned(monkeypatch)
+    monkeypatch.setattr(helper, "_openvpn_pki_candidates", lambda: [str(pki)])
+    assert helper.openvpn_clients()["available"] is False
+
+
 def test_openvpn_clients_rejects_symlink_index(tmp_path, monkeypatch):
     pki = tmp_path / "pki"
     for name in ("issued", "private"):
@@ -242,6 +256,18 @@ def test_openvpn_crl_state_rejects_symlink_crl(tmp_path, monkeypatch):
     config.write_text("crl-verify crl.pem\\n", encoding="utf-8")
     target.write_text("public CRL data\\n", encoding="utf-8")
     link.symlink_to(target)
+    _pretend_root_owned(monkeypatch)
+    assert helper._openvpn_crl_state(str(config)) == {
+        "crl_configured": True, "crl_file_present": False
+    }
+
+
+def test_openvpn_crl_state_rejects_group_or_world_writable_crl(tmp_path, monkeypatch):
+    config = tmp_path / "server.conf"
+    crl = tmp_path / "crl.pem"
+    config.write_text("crl-verify crl.pem\\n", encoding="utf-8")
+    crl.write_text("public CRL data\\n", encoding="utf-8")
+    crl.chmod(0o666)
     _pretend_root_owned(monkeypatch)
     assert helper._openvpn_crl_state(str(config)) == {
         "crl_configured": True, "crl_file_present": False
