@@ -752,18 +752,19 @@ def test_openvpn_create_client_refuses_existing_name_and_files(monkeypatch):
         helper.openvpn_create_client("phone01")
 
 
-def test_openvpn_create_client_rejects_failed_easyrsa(monkeypatch):
+def test_openvpn_create_client_rejects_failed_easyrsa(monkeypatch, capsys):
     monkeypatch.setattr(helper, "_openvpn_unique_pki", lambda require_ca_key=False: ("/safe/pki", ""))
     monkeypatch.setattr(helper, "_openvpn_easyrsa_path", lambda: "/usr/share/easy-rsa/easyrsa")
     monkeypatch.setattr(helper.subprocess, "run", lambda args, **kwargs:
         helper.subprocess.CompletedProcess(args, 1, "", "sensitive output"))
-    with pytest.raises(SystemExit, match="Easy-RSA client issuance failed"):
+    with pytest.raises(SystemExit):
         helper.openvpn_create_client("phone01")
+    assert "Easy-RSA client issuance failed" in capsys.readouterr().err
 
 
 
 
-def test_openvpn_unique_pki_rejects_ambiguity_even_if_only_one_has_ca_key(tmp_path, monkeypatch):
+def test_openvpn_unique_pki_rejects_ambiguity_even_if_only_one_has_ca_key(tmp_path, monkeypatch, capsys):
     paths = []
     for label in ("one", "two"):
         pki = tmp_path / label
@@ -779,11 +780,12 @@ def test_openvpn_unique_pki_rejects_ambiguity_even_if_only_one_has_ca_key(tmp_pa
     ca_key.chmod(0o600)
     _pretend_root_owned(monkeypatch)
     monkeypatch.setattr(helper, "_openvpn_pki_candidates", lambda: [str(p) for p in paths])
-    with pytest.raises(SystemExit, match="More than one Easy-RSA database"):
+    with pytest.raises(SystemExit):
         helper._openvpn_unique_pki(require_ca_key=True)
+    assert "More than one Easy-RSA database" in capsys.readouterr().err
 
 
-def test_openvpn_unique_pki_rejects_group_readable_ca_key(tmp_path, monkeypatch):
+def test_openvpn_unique_pki_rejects_group_readable_ca_key(tmp_path, monkeypatch, capsys):
     pki = tmp_path / "pki"
     for name in ("issued", "private"):
         (pki / name).mkdir(parents=True, mode=0o700)
@@ -796,7 +798,8 @@ def test_openvpn_unique_pki_rejects_group_readable_ca_key(tmp_path, monkeypatch)
     ca_key.chmod(0o640)
     _pretend_root_owned(monkeypatch)
     monkeypatch.setattr(helper, "_openvpn_pki_candidates", lambda: [str(pki)])
-    with pytest.raises(SystemExit, match="accessible only to root"):
+    with pytest.raises(SystemExit):
         helper._openvpn_unique_pki(require_ca_key=True)
+    assert "accessible only to root" in capsys.readouterr().err
 
 
