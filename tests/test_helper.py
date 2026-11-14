@@ -700,3 +700,64 @@ def test_openvpn_crl_state_rejects_symlink_config(tmp_path):
     assert helper._openvpn_crl_state(str(config)) == {
         "crl_configured": False, "crl_file_present": False
     }
+
+
+def test_openvpn_create_client_uses_trusted_easyrsa_and_never_returns_key(tmp_path, monkeypatch):
+    pki = tmp_path / "pki"
+    for name in ("issued", "private"):
+        (pki / name).mkdir(parents=True, mode=0o700)
+        (pki / name).chmod(0o700)
+    pki.chmod(0o700)
+    (pki / "private" / "phone01.key").write_text("PRIVATE KEY MATERIAL", encoding="utf-8")
+    (pki / "private" / "phone01.key").chmod(0o600)
+    (pki / "issued" / "phone01.crt").write_text("PUBLIC CERTIFICATE", encoding="utf-8")
+    (pki / "issued" / "phone01.crt").chmod(0o600)
+    script = tmp_path / "easyrsa"
+    script.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
+    script.chmod(0o700)
+    _pretend_root_owned(monkeypatch)
+    monkeypatch.setattr(helper, "_openvpn_unique_pki", lambda require_ca_key=False: (str(pki), ""))
+    monkeypatch.setattr(helper, "_openvpn_easyrsa_path", lambda: str(script))
+    updated = "V\\t301231235959Z\\t\\t01\\tunknown\\t/CN=phone01\\n"
+    monkeypatch.setattr(helper, "_read_openvpn_index", lambda path: updated)
+    calls = []
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return helper.subprocess.CompletedProcess(args, 0, "", "")
+    monkeypatch.setattr(helper.subprocess, "run", fake_run)
+    result = helper.openvpn_create_client("phone01")
+    assert result == {"created": True, "name": "phone01"}
+    assert calls[0][0] == [str(script), "--batch", "build-client-full", "phone01", "nopass"]
+    assert calls[0][1]["env"]["EASYRSA_PKI"] == str(pki)
+    assert calls[0][1]["env"]["EASYRSA_BATCH"] == "1"
+    assert calls[0][1]["timeout"] == 90
+    assert "PRIVATE KEY" not in json.dumps(result)
+
+
+def test_openvpn_create_client_rejects_invalid_or_reserved_names(monkeypatch):
+    monkeypatch.setattr(helper, "_openvpn_unique_pki",
+                        lambda **kwargs: pytest.fail("PKI must not be inspected"))
+    for name in ("../bad", "Server", "server", "root", "ca"):
+        with pytest.raises(SystemExit):
+            helper.openvpn_create_client(name)
+
+
+def test_openvpn_create_client_refuses_existing_name_and_files(monkeypatch):
+    monkeypatch.setattr(helper, "_openvpn_unique_pki",
+                        lambda require_ca_key=False: ("/safe/pki",
+                            "V\\t301231235959Z\\t\\t01\\tunknown\\t/CN=phone01\\n"))
+    monkeypatch.setattr(helper, "_openvpn_easyrsa_path",
+                        lambda: pytest.fail("Easy-RSA must not run for duplicate"))
+    with pytest.raises(SystemExit):
+        helper.openvpn_create_client("phone01")
+
+
+def test_openvpn_create_client_rejects_failed_easyrsa(monkeypatch):
+    monkeypatch.setattr(helper, "_openvpn_unique_pki", lambda require_ca_key=False: ("/safe/pki", ""))
+    monkeypatch.setattr(helper, "_openvpn_easyrsa_path", lambda: "/usr/share/easy-rsa/easyrsa")
+    monkeypatch.setattr(helper.subprocess, "run", lambda args, **kwargs:
+        helper.subprocess.CompletedProcess(args, 1, "", "sensitive output"))
+    with pytest.raises(SystemExit, match="Easy-RSA client issuance failed"):
+        helper.openvpn_create_client("phone01")
+
+
