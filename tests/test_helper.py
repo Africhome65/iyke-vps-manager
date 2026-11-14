@@ -523,3 +523,14 @@ def test_xray_install_uses_pinned_official_installer_in_transient_service(monkey
 def test_xray_action_rejects_unexpected_fields():
     with pytest.raises(SystemExit):
         helper.handle_xray_action({"action": "xray_install", "domain": "example.com"})
+
+
+def test_openvpn_crl_state_rejects_symlink_config(tmp_path):
+    target = tmp_path / "actual-server.conf"
+    config = tmp_path / "server.conf"
+    target.write_text("crl-verify crl.pem\\n", encoding="utf-8")
+    target.chmod(0o600)
+    config.symlink_to(target)
+    assert helper._openvpn_crl_state(str(config)) == {
+        "crl_configured": False, "crl_file_present": False
+    }
