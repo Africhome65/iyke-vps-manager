@@ -2656,6 +2656,13 @@ def handle_hysteria_action(request):
             fail("Unexpected request fields")
         print(json.dumps(hysteria_install()))
         return True
+    if action == "hysteria_single_port_preview":
+        if set(request) != {"action", "domain", "port", "cert_path", "key_path"}:
+            fail("Unexpected request fields")
+        print(json.dumps(hysteria_single_port_preview(
+            request["domain"], request["port"], request["cert_path"], request["key_path"]
+        )))
+        return True
     return False
 
 
