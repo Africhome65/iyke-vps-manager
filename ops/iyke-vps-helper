@@ -1246,6 +1246,10 @@ def _apply_xray_config_change(candidate, original_raw, metadata):
             except FileNotFoundError:
                 pass
 
+    latest_raw, _, latest_metadata = _read_xray_config_document()
+    if latest_raw != original_raw or (latest_metadata.st_ino != metadata.st_ino
+            or latest_metadata.st_mtime_ns != metadata.st_mtime_ns):
+        fail("Xray configuration changed during validation; refusing to overwrite the newer version")
     backup = _save_xray_backup(original_raw)
     _atomic_xray_config_write(encoded, metadata)
     try:
