@@ -242,6 +242,8 @@ def test_vpn_status_reports_missing_software(monkeypatch):
         "openvpn": {"installed": False, "instances": []},
         "xray": {"installed": False, "service": "not-installed",
                  "config_status": "unavailable", "inbounds": [], "public_hostname": ""},
+        "hysteria": {"installed": False, "service": "not-installed",
+                     "config_status": "missing"},
     }
 
 
@@ -863,6 +865,56 @@ def test_xray_install_uses_pinned_official_installer_in_transient_service(monkey
     assert "install --without-logfiles" in command[-1]
     assert kwargs["check"] is True
     assert kwargs["timeout"] == 330
+
+
+def test_hysteria_install_refuses_existing_installation(monkeypatch):
+    monkeypatch.setattr(helper.shutil, "which",
+                        lambda name: "/usr/bin/systemd-run" if name == "systemd-run" else None)
+    monkeypatch.setattr(helper.os.path, "lexists",
+                        lambda path: path == "/etc/hysteria")
+    monkeypatch.setattr(helper.subprocess, "run",
+                        lambda *a, **k: pytest.fail("must not run installer over existing Hysteria"))
+    with pytest.raises(SystemExit):
+        helper.hysteria_install()
+
+
+def test_hysteria_install_uses_pinned_official_installer_in_transient_service(monkeypatch):
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        if command[:2] == ["getent", "passwd"]:
+            return helper.subprocess.CompletedProcess(command, 2, "", "")
+        return helper.subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper.shutil, "which",
+                        lambda name: "/usr/bin/systemd-run" if name == "systemd-run" else None)
+    monkeypatch.setattr(helper.os.path, "lexists", lambda path: False)
+    monkeypatch.setattr(helper.os.path, "isfile", lambda path: True)
+    monkeypatch.setattr(helper.os, "access", lambda path, mode: True)
+    monkeypatch.setattr(helper, "_unit_state", lambda unit: "inactive")
+    monkeypatch.setattr(helper.subprocess, "run", fake_run)
+
+    result = helper.hysteria_install()
+    assert result == {
+        "installed": True, "service": "inactive", "config_status": "example",
+        "installer": "official-pinned", "service_started": False, "firewall_changed": False,
+    }
+    assert len(calls) == 2
+    command, kwargs = calls[1]
+    assert command[0] == "/usr/bin/systemd-run"
+    assert "--wait" in command and "--pipe" in command and "--collect" in command
+    assert "--property=RuntimeMaxSec=300" in command
+    assert helper.HYSTERIA_INSTALLER_COMMIT in command[-1]
+    assert "HYSTERIA_USER=hysteria bash" in command[-1]
+    assert "systemctl enable" not in command[-1]
+    assert kwargs["check"] is True
+    assert kwargs["timeout"] == 330
+
+
+def test_hysteria_action_rejects_unexpected_fields():
+    with pytest.raises(SystemExit):
+        helper.handle_hysteria_action({"action": "hysteria_install", "domain": "example.com"})
 
 
 def test_xray_action_rejects_unexpected_fields():

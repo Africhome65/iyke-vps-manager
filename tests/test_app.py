@@ -390,3 +390,26 @@ def test_openvpn_profile_download_rejects_invalid_name(client, monkeypatch):
     login(client)
     monkeypatch.setattr("app.subprocess.run", lambda *a, **k: pytest.fail("helper should not run"))
     assert client.get("/vpn/openvpn/clients/../profile?endpoint=vpn.example.com").status_code in {400, 404}
+
+
+
+def test_hysteria_install_route_requires_login_and_calls_helper(client, monkeypatch):
+    response = client.post("/vpn/hysteria/install")
+    assert response.status_code == 302
+    login(client)
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(
+            args, 0,
+            stdout='{"installed":true,"service":"inactive","service_started":false}',
+            stderr="",
+        )
+
+    monkeypatch.setattr("app.subprocess.run", fake_run)
+    response = client.post("/vpn/hysteria/install")
+    assert response.status_code == 302
+    request = __import__("json").loads(calls[0][1]["input"])
+    assert request == {"action": "hysteria_install"}
+    assert calls[0][1]["timeout"] == 330
