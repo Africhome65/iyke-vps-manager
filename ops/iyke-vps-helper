@@ -773,6 +773,8 @@ def openvpn_revoke_client(name):
         if not crl_state.get("crl_configured") or not crl_state.get("crl_file_present"):
             fail("A valid CRL linked to the active server configuration is required before revocation")
         directives = _openvpn_config_directives(config_path)
+        if not _openvpn_config_uses_pki_ca(config_path, directives, pki):
+            fail("The active OpenVPN server must use the trusted Easy-RSA CA certificate")
         server_cert_value = _openvpn_single_directive(directives, "cert")
         if not server_cert_value:
             fail("The active server certificate path cannot be verified")
@@ -883,6 +885,23 @@ def _openvpn_single_directive(directives, key, default=None):
     return values[0][0]
 
 
+def _openvpn_config_uses_pki_ca(config_path, directives, pki):
+    """Require the active server to use this PKI's exact protected CA certificate."""
+    ca_value = _openvpn_single_directive(directives, "ca")
+    if not ca_value:
+        return False
+    ca_path = ca_value if os.path.isabs(ca_value) else os.path.join(os.path.dirname(config_path), ca_value)
+    ca_path = os.path.abspath(ca_path)
+    expected = os.path.abspath(os.path.join(pki, "ca.crt"))
+    if os.path.normpath(ca_path) != os.path.normpath(expected):
+        return False
+    ca_fd = _openvpn_trusted_file(ca_path, 1024 * 1024)
+    if ca_fd is None:
+        return False
+    os.close(ca_fd)
+    return True
+
+
 
 def _openvpn_certificate_is_client(cert_path):
     """Require the certificate's EKU to explicitly authorize TLS client authentication."""
@@ -956,6 +975,8 @@ def _openvpn_get_profile_unlocked(name, endpoint, pki, index_text):
     if len(matching) != 1:
         fail("Exactly one active OpenVPN server configuration must be verified")
     config_path, directives = matching[0]
+    if not _openvpn_config_uses_pki_ca(config_path, directives, pki):
+        fail("The active OpenVPN server must use the trusted Easy-RSA CA certificate")
 
     port_text = _openvpn_single_directive(directives, "port", "1194")
     proto = _openvpn_single_directive(directives, "proto", "udp").lower()
