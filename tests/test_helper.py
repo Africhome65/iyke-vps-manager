@@ -753,6 +753,19 @@ def test_openvpn_create_client_refuses_existing_name_and_files(monkeypatch):
         helper.openvpn_create_client("phone01")
 
 
+def test_openvpn_create_client_rejects_pki_change_after_lock(monkeypatch):
+    monkeypatch.setattr(
+        helper, "_openvpn_unique_pki",
+        lambda require_ca_key=False: ("/different/pki", "")
+    )
+    monkeypatch.setattr(
+        helper, "_openvpn_easyrsa_path",
+        lambda: pytest.fail("Easy-RSA must not run when the PKI changes")
+    )
+    with pytest.raises(SystemExit):
+        helper._openvpn_create_client_unlocked("phone01", "/locked/pki")
+
+
 def test_openvpn_create_client_rejects_failed_easyrsa(monkeypatch, capsys):
     monkeypatch.setattr(helper, "_openvpn_unique_pki", lambda require_ca_key=False: ("/safe/pki", ""))
     monkeypatch.setattr(helper, "_openvpn_pki_lock", lambda pki: __import__("contextlib").nullcontext())
