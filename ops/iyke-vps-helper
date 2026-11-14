@@ -321,19 +321,22 @@ def _openvpn_unique_pki(require_ca_key=False):
         index = _read_openvpn_index(os.path.join(normalized, "index.txt"))
         if index is None:
             continue
-        if require_ca_key:
-            ca_key_fd = _openvpn_trusted_file(os.path.join(normalized, "private", "ca.key"), 1024 * 1024)
-            if ca_key_fd is None:
-                continue
-            ca_key_info = os.fstat(ca_key_fd)
-            os.close(ca_key_fd)
-            if stat.S_IMODE(ca_key_info.st_mode) & 0o077:
-                continue
         candidates.append((normalized, index))
     if len(candidates) != 1:
         fail("No trusted Easy-RSA database found" if not candidates
              else "More than one Easy-RSA database found; configure one explicitly")
-    return candidates[0]
+    selected = candidates[0]
+    if require_ca_key:
+        ca_key_fd = _openvpn_trusted_file(
+            os.path.join(selected[0], "private", "ca.key"), 1024 * 1024
+        )
+        if ca_key_fd is None:
+            fail("The trusted Easy-RSA CA private key is missing or unsafe")
+        ca_key_info = os.fstat(ca_key_fd)
+        os.close(ca_key_fd)
+        if stat.S_IMODE(ca_key_info.st_mode) & 0o077:
+            fail("The Easy-RSA CA private key must be accessible only to root")
+    return selected
 
 
 def _openvpn_easyrsa_path():
