@@ -1125,10 +1125,10 @@ def _openvpn_crl_state(config_path):
     ca_directives = []
     for line in lines:
         directive = line.split("#", 1)[0].strip()
-        match = re.match(r"^crl-verify\\s+(\\S+)(?:\\s+.*)?$", directive)
+        match = re.match(r"^crl-verify\s+(\S+)(?:\s+.*)?$", directive)
         if match:
             directives.append(match.group(1).strip("\\\"'"))
-        ca_match = re.match(r"^ca\\s+(\\S+)(?:\\s+.*)?$", directive)
+        ca_match = re.match(r"^ca\s+(\S+)(?:\s+.*)?$", directive)
         if ca_match:
             ca_directives.append(ca_match.group(1).strip("\\\"'"))
     if not directives:
