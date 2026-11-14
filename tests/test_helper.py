@@ -814,13 +814,15 @@ def test_openvpn_get_profile_builds_inline_profile_only_for_verified_server(monk
     monkeypatch.setattr(helper, "_openvpn_runtime_config_matches", lambda unit, path: True)
     monkeypatch.setattr(helper, "_openvpn_certificate_is_client", lambda path: True)
     monkeypatch.setattr(helper, "_openvpn_config_directives", lambda path: {
-        "port": [["1194"]], "proto": [["udp"]], "dev": [["tun"]], "ca": [["ca.crt"]]
+        "port": [["1194"]], "proto": [["udp"]], "dev": [["tun"]], "ca": [["ca.crt"]],
+        "tls-auth": [["ta.key"]],
     })
     def read_pem(path, label, max_bytes=1024 * 1024):
         return {
             "CA certificate": "-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----\n",
             "client certificate": "-----BEGIN CERTIFICATE-----\nCERT\n-----END CERTIFICATE-----\n",
             "client private key": "-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----\n",
+            "tls-auth key": "-----BEGIN OpenVPN Static key V1-----\nTLSKEY\n-----END OpenVPN Static key V1-----\n",
         }[label]
     monkeypatch.setattr(helper, "_openvpn_read_pem", read_pem)
     key_file = tmp_path / "phone01.key"
@@ -833,6 +835,8 @@ def test_openvpn_get_profile_builds_inline_profile_only_for_verified_server(monk
     assert "remote vpn.example.com 1194" in result["profile"]
     assert "<ca>" in result["profile"] and "<cert>" in result["profile"]
     assert "<key>" in result["profile"] and "KEY" in result["profile"]
+    assert "<tls-auth>" in result["profile"]
+    assert "key-direction" not in result["profile"]
 
 
 def test_openvpn_get_profile_rejects_private_or_invalid_endpoint(monkeypatch):
