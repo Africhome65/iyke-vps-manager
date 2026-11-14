@@ -424,6 +424,41 @@ def create_app(test_config=None):
             flash(str(exc), "error")
         return redirect(url_for("vpn_services"))
 
+    @app.post("/vpn/hysteria/configure")
+    @login_required
+    def configure_hysteria_single_port():
+        domain = request.form.get("domain", "")
+        port = request.form.get("port", "")
+        cert_path = request.form.get("cert_path", "")
+        key_path = request.form.get("key_path", "")
+        try:
+            result = json.loads(run_helper(
+                "hysteria_single_port_configure", timeout=90, domain=domain, port=port,
+                cert_path=cert_path, key_path=key_path
+            ) or "{}")
+            if (result.get("configured") is not True
+                    or result.get("service_enabled") is not False
+                    or result.get("service_state") != "not-started"
+                    or result.get("firewall_changed") is not False
+                    or not isinstance(result.get("password"), str)
+                    or not isinstance(result.get("client_uri"), str)):
+                raise RuntimeError("Hysteria configuration could not be verified")
+            audit(
+                "hysteria_configured",
+                f"Prepared disabled Hysteria service for {result['domain']} UDP/{result['udp_port']}",
+            )
+            response = Response(
+                render_template("hysteria_setup.html", result=result),
+                mimetype="text/html; charset=utf-8",
+            )
+            response.headers["Cache-Control"] = "no-store, private, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Referrer-Policy"] = "no-referrer"
+            return response
+        except (RuntimeError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            flash(str(exc), "error")
+            return redirect(url_for("vpn_services"))
+
     @app.post("/vpn/hysteria/install")
     @login_required
     def install_hysteria():
