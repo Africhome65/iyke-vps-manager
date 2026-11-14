@@ -495,7 +495,7 @@ def openvpn_get_profile(name, endpoint):
             fail("OpenVPN endpoint must be a public IP address or DNS name")
         endpoint = str(address)
     except ValueError:
-        if not re.fullmatch(
+        if "." not in endpoint or not re.fullmatch(
             r"(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*",
             endpoint
         ):
