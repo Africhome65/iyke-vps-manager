@@ -433,6 +433,49 @@ def test_openvpn_crl_state_reports_missing_directive(tmp_path, monkeypatch):
     }
 
 
+def test_openvpn_ca_cert_matches_same_certificate_at_different_paths(tmp_path, monkeypatch):
+    pki = tmp_path / "pki"
+    (pki / "issued").mkdir(parents=True, mode=0o700)
+    (pki / "private").mkdir(mode=0o700)
+    pki.chmod(0o700)
+    configured_ca = tmp_path / "server-ca.crt"
+    configured_ca.write_text("certificate A", encoding="ascii")
+    configured_ca.chmod(0o600)
+    (pki / "ca.crt").write_text("certificate A", encoding="ascii")
+    (pki / "ca.crt").chmod(0o600)
+    _pretend_root_owned(monkeypatch)
+    monkeypatch.setattr(helper.shutil, "which", lambda name: "/usr/bin/openssl")
+    calls = []
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return helper.subprocess.CompletedProcess(args, 0, b"same DER certificate", b"")
+    monkeypatch.setattr(helper.subprocess, "run", fake_run)
+    assert helper._openvpn_ca_cert_matches(str(configured_ca), str(pki)) is True
+    assert len(calls) == 2
+    assert all(call[0][:2] == ["/usr/bin/openssl", "x509"] for call in calls)
+    assert all(call[0][-2:] == ["-outform", "DER"] for call in calls)
+    assert all(call[1]["timeout"] == 10 and len(call[1]["pass_fds"]) == 1 for call in calls)
+
+
+def test_openvpn_ca_cert_matches_rejects_different_certificates(tmp_path, monkeypatch):
+    pki = tmp_path / "pki"
+    (pki / "issued").mkdir(parents=True, mode=0o700)
+    (pki / "private").mkdir(mode=0o700)
+    pki.chmod(0o700)
+    configured_ca = tmp_path / "server-ca.crt"
+    configured_ca.write_text("certificate A", encoding="ascii")
+    configured_ca.chmod(0o600)
+    (pki / "ca.crt").write_text("certificate B", encoding="ascii")
+    (pki / "ca.crt").chmod(0o600)
+    _pretend_root_owned(monkeypatch)
+    monkeypatch.setattr(helper.shutil, "which", lambda name: "/usr/bin/openssl")
+    outputs = iter((b"DER certificate A", b"DER certificate B"))
+    def fake_run(args, **kwargs):
+        return helper.subprocess.CompletedProcess(args, 0, next(outputs), b"")
+    monkeypatch.setattr(helper.subprocess, "run", fake_run)
+    assert helper._openvpn_ca_cert_matches(str(configured_ca), str(pki)) is False
+
+
 def test_openvpn_crl_state_verifies_crl_against_matching_ca(tmp_path, monkeypatch):
     config = tmp_path / "server.conf"
     pki = tmp_path / "pki"
