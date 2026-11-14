@@ -368,6 +368,8 @@ def openvpn_create_client(name):
     if any(row["common_name"] == name for row in _openvpn_index_clients(index_text)):
         fail("An OpenVPN certificate with that client name already exists")
     cert_path = os.path.join(pki, "issued", name + ".crt")
+    if not _openvpn_certificate_is_client(cert_path):
+        fail("Certificate is not verified for TLS client authentication")
     key_path = os.path.join(pki, "private", name + ".key")
     if os.path.lexists(cert_path) or os.path.lexists(key_path):
         fail("Client certificate or key file already exists; refusing to overwrite")
@@ -481,6 +483,31 @@ def _openvpn_single_directive(directives, key, default=None):
         fail("OpenVPN server configuration has an ambiguous " + key + " directive")
     return values[0][0]
 
+
+
+def _openvpn_certificate_is_client(cert_path):
+    """Require the certificate's EKU to explicitly authorize TLS client authentication."""
+    cert_fd = _openvpn_trusted_file(cert_path, 1024 * 1024)
+    if cert_fd is None:
+        return False
+    try:
+        openssl = shutil.which("openssl")
+        if not openssl:
+            return False
+        result = subprocess.run(
+            [openssl, "x509", "-in", f"/proc/self/fd/{cert_fd}",
+             "-noout", "-ext", "extendedKeyUsage"],
+            text=True, capture_output=True, check=False, timeout=10,
+            pass_fds=(cert_fd,),
+        )
+        if result.returncode != 0:
+            return False
+        usage = result.stdout.lower()
+        return "tls web client authentication" in usage or "clientauth" in usage
+    except (OSError, subprocess.SubprocessError):
+        return False
+    finally:
+        os.close(cert_fd)
 
 def openvpn_get_profile(name, endpoint):
     """Build an inline client profile only for a narrowly validated server config."""
