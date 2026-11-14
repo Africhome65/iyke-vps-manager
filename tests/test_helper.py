@@ -822,6 +822,14 @@ def test_openvpn_get_profile_builds_inline_profile_only_for_verified_server(monk
             "client private key": "-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----\n",
         }[label]
     monkeypatch.setattr(helper, "_openvpn_read_pem", read_pem)
+    key_file = __import__("pathlib").Path(monkeypatch.tempdir) / "phone01.key" if hasattr(monkeypatch, "tempdir") else None
+    if key_file is None:
+        import tempfile
+        key_file = __import__("pathlib").Path(tempfile.mkstemp()[1])
+    key_file.write_text("private key", encoding="ascii")
+    key_file.chmod(0o600)
+    monkeypatch.setattr(helper, "_openvpn_trusted_file",
+                        lambda path, max_bytes=4 * 1024 * 1024: os.open(key_file, os.O_RDONLY))
     result = helper.openvpn_get_profile("phone01", "vpn.example.com")
     assert result["name"] == "phone01"
     assert "remote vpn.example.com 1194" in result["profile"]
