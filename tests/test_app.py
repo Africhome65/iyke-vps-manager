@@ -215,3 +215,32 @@ def test_xray_install_route_requires_login_and_calls_helper(client, monkeypatch)
     request = __import__("json").loads(calls[0][1]["input"])
     assert request == {"action": "xray_install"}
     assert calls[0][1]["timeout"] == 330
+
+
+def test_openvpn_client_issuance_route_requires_login_and_calls_helper(client, monkeypatch):
+    assert client.post("/vpn/openvpn/clients", data={"name": "phone01"}).status_code == 302
+    login(client)
+    calls = []
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(
+            args, 0, stdout='{"created":true,"name":"phone01"}', stderr=""
+        )
+    monkeypatch.setattr("app.subprocess.run", fake_run)
+    response = client.post("/vpn/openvpn/clients", data={"name": "phone01"})
+    assert response.status_code == 302
+    request = __import__("json").loads(calls[0][1]["input"])
+    assert request == {"action": "openvpn_create_client", "name": "phone01"}
+    assert calls[0][1]["timeout"] == 120
+
+
+def test_openvpn_client_issuance_route_rejects_invalid_name_before_helper(client, monkeypatch):
+    login(client)
+    monkeypatch.setattr("app.subprocess.run", lambda *a, **k: pytest.fail("helper should not run"))
+    response = client.post("/vpn/openvpn/clients", data={"name": "../bad"})
+    assert response.status_code == 302
+    with client.session_transaction() as session:
+        flashes = session.get("_flashes", [])
+    assert any("OpenVPN client name" in message for _, message in flashes)
+
+
