@@ -840,6 +840,54 @@ def test_openvpn_get_profile_builds_inline_profile_only_for_verified_server(monk
     assert "key-direction" not in result["profile"]
 
 
+def test_openvpn_revoke_client_requires_client_eku_before_any_easyrsa_action(tmp_path, monkeypatch):
+    pki = tmp_path / "pki"
+    pki.mkdir(mode=0o700)
+    index = "V\\t301231235959Z\\t\\t01\\tunknown\\t/CN=phone01\\n"
+    monkeypatch.setattr(helper, "_openvpn_unique_pki", lambda require_ca_key=False: (str(pki), index))
+    monkeypatch.setattr(helper, "_safe_root_directory", lambda path: True)
+    monkeypatch.setattr(helper, "_read_openvpn_index", lambda path: index)
+    monkeypatch.setattr(helper, "_openvpn_certificate_is_client", lambda path: False)
+    monkeypatch.setattr(helper, "_openvpn_run_easyrsa",
+                        lambda *args, **kwargs: pytest.fail("Easy-RSA must not run for a non-client certificate"))
+    with pytest.raises(SystemExit):
+        helper.openvpn_revoke_client("phone01")
+
+
+def test_openvpn_revoke_client_regenerates_verified_crl(tmp_path, monkeypatch):
+    pki = tmp_path / "pki"
+    pki.mkdir(mode=0o700)
+    initial = "V\\t301231235959Z\\t\\t01\\tunknown\\t/CN=phone01\\n"
+    revoked = "R\\t301231235959Z\\t261114000000Z\\t01\\tunknown\\t/CN=phone01\\n"
+    index_state = {"value": initial}
+    monkeypatch.setattr(helper, "_openvpn_unique_pki", lambda require_ca_key=False: (str(pki), initial))
+    monkeypatch.setattr(helper, "_safe_root_directory", lambda path: True)
+    monkeypatch.setattr(helper, "_read_openvpn_index", lambda path: index_state["value"])
+    monkeypatch.setattr(helper, "_openvpn_certificate_is_client", lambda path: True)
+    monkeypatch.setattr(helper, "_openvpn_server_config_paths",
+                        lambda: ["/etc/openvpn/server/server.conf"])
+    monkeypatch.setattr(helper, "_unit_state", lambda unit: "active")
+    monkeypatch.setattr(helper, "_openvpn_runtime_config_matches", lambda unit, path: True)
+    monkeypatch.setattr(helper, "_openvpn_crl_state", lambda path: {
+        "crl_configured": True, "crl_file_present": True
+    })
+    monkeypatch.setattr(helper, "_openvpn_config_directives", lambda path: {"cert": [["server.crt"]]})
+    monkeypatch.setattr(helper, "_openvpn_read_pem", lambda path, label: "-----BEGIN X509 CRL-----\\nCRL\\n-----END X509 CRL-----\\n")
+    monkeypatch.setattr(helper, "_openvpn_easyrsa_path", lambda: "/usr/bin/easyrsa")
+    calls = []
+    def fake_easyrsa(easyrsa, pki_path, arguments):
+        calls.append(arguments)
+        if arguments[0] == "revoke":
+            index_state["value"] = revoked
+    monkeypatch.setattr(helper, "_openvpn_run_easyrsa", fake_easyrsa)
+    result = helper.openvpn_revoke_client("phone01")
+    assert result == {
+        "name": "phone01", "revoked": True, "crl_regenerated": True,
+        "server_reload_performed": False,
+    }
+    assert calls == [["revoke", "phone01"], ["gen-crl"]]
+
+
 def test_openvpn_get_profile_rejects_private_or_invalid_endpoint(monkeypatch):
     monkeypatch.setattr(helper, "_openvpn_unique_pki", lambda: pytest.fail("must reject endpoint before reading PKI"))
     for endpoint in ("127.0.0.1", "localhost", "vpn.example.com:1194", "../bad"):
