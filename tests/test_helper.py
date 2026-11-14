@@ -152,7 +152,7 @@ def test_openvpn_crl_state_checks_relative_crl_file(tmp_path, monkeypatch):
 
 def test_openvpn_crl_state_ignores_commented_directive(tmp_path, monkeypatch):
     config = tmp_path / "server.conf"
-    config.write_text("# crl-verify crl.pem\\nport 1194\\n", encoding="utf-8")
+    config.write_text("# crl-verify crl.pem\nport 1194\n", encoding="utf-8")
     monkeypatch.setattr(helper.os, "lstat", lambda path: type("Info", (), {
         "st_mode": stat.S_IFREG | 0o644, "st_uid": 0, "st_nlink": 1
     })())
@@ -165,8 +165,8 @@ def test_openvpn_crl_state_rejects_symlink_crl(tmp_path, monkeypatch):
     config = tmp_path / "server.conf"
     target = tmp_path / "actual-crl.pem"
     link = tmp_path / "crl.pem"
-    config.write_text("crl-verify crl.pem\\n", encoding="utf-8")
-    target.write_text("public CRL data\\n", encoding="utf-8")
+    config.write_text("crl-verify crl.pem\n", encoding="utf-8")
+    target.write_text("public CRL data\n", encoding="utf-8")
     link.symlink_to(target)
     real_lstat = helper.os.lstat
 
