@@ -631,3 +631,36 @@ def test_xray_apply_restores_original_bytes_if_atomic_replace_reports_failure(tm
         helper._apply_xray_config_change({"inbounds": []}, original, metadata)
     assert len(writes) == 2
     assert writes[1] == original
+
+
+
+def test_xray_candidate_is_valid_json_with_real_newline_before_apply(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    config_path = tmp_path / "config.json"
+    config_path.write_text('{"inbounds":[]}\n', encoding="utf-8")
+    original = config_path.read_bytes()
+    metadata = SimpleNamespace(
+        st_uid=os.geteuid(), st_gid=os.getegid(),
+        st_mode=stat.S_IFREG | 0o600, st_ino=123, st_mtime_ns=456
+    )
+    monkeypatch.setattr(helper, "XRAY_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(helper, "_read_xray_config_document",
+                        lambda: (original, {"inbounds": []}, metadata))
+    validated = []
+    def validate_candidate(path):
+        raw = open(path, "rb").read()
+        validated.append(raw)
+        assert raw.endswith(b"\n")
+        assert json.loads(raw.decode("utf-8")) == {"inbounds": []}
+    monkeypatch.setattr(helper, "_xray_validate_candidate", validate_candidate)
+    monkeypatch.setattr(helper, "_save_xray_backup", lambda raw: "/protected/backup.bak")
+    writes = []
+    monkeypatch.setattr(helper, "_atomic_xray_config_write",
+                        lambda raw, info: writes.append(raw))
+    monkeypatch.setattr(helper.subprocess, "run", lambda *a, **k:
+                        helper.subprocess.CompletedProcess(a[0], 0, "", ""))
+    monkeypatch.setattr(helper, "_unit_state", lambda unit: "active")
+    result = helper._apply_xray_config_change({"inbounds": []}, original, metadata)
+    assert result == "/protected/backup.bak"
+    assert len(validated) == 1 and len(writes) == 1
+    assert json.loads(writes[0].decode("utf-8")) == {"inbounds": []}
