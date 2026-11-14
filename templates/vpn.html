@@ -85,7 +85,7 @@
           </div>
         {% endfor %}</div>
       {% else %}<p class="empty">No Xray clients have been created yet.</p>{% endif %}
-      <p class="muted">Client identities are currently stored in the manager registry. They are not yet synchronized with the detected Xray inbounds, and downloadable connection profiles are not yet available.</p>
+      <p class="muted">New clients are added to the matching existing WebSocket inbound after a protected backup and Xray configuration test. Xray is restarted to activate changes. Existing clients and unrelated settings are preserved. Downloadable connection profiles are the next feature.</p>
     {% else %}
       <p class="muted">Install the official Xray-core engine. This does not create VLESS/VMess listeners, obtain certificates, change DNS or alter firewall rules.</p>
       <form method="post" action="{{ url_for('install_xray') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit">Install Xray-core</button></form>
