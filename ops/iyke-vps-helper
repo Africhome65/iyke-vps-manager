@@ -440,9 +440,9 @@ def _openvpn_runtime_config_matches(unit, expected_config):
         pid = first.stdout.strip()
         with open(f"/proc/{pid}/cmdline", "rb") as source:
             raw = source.read(65537)
-        if not raw or len(raw) > 65536 or not raw.endswith(b"\\0"):
+        if not raw or len(raw) > 65536 or not raw.endswith(b"\0"):
             return False
-        argv = [part.decode("utf-8", "strict") for part in raw.rstrip(b"\\0").split(b"\\0")]
+        argv = [part.decode("utf-8", "strict") for part in raw.rstrip(b"\0").split(b"\0")]
         if not argv:
             return False
         process_exe = os.readlink(f"/proc/{pid}/exe")
