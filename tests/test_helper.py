@@ -812,6 +812,7 @@ def test_openvpn_get_profile_builds_inline_profile_only_for_verified_server(monk
     monkeypatch.setattr(helper, "_openvpn_server_config_paths", lambda: ["/etc/openvpn/server/server.conf"])
     monkeypatch.setattr(helper, "_unit_state", lambda unit: "active")
     monkeypatch.setattr(helper, "_openvpn_runtime_config_matches", lambda unit, path: True)
+    monkeypatch.setattr(helper, "_openvpn_certificate_is_client", lambda path: True)
     monkeypatch.setattr(helper, "_openvpn_config_directives", lambda path: {
         "port": [["1194"]], "proto": [["udp"]], "dev": [["tun"]], "ca": [["ca.crt"]]
     })
@@ -847,5 +848,33 @@ def test_openvpn_get_profile_requires_verified_active_server(monkeypatch):
     monkeypatch.setattr(helper, "_openvpn_server_config_paths", lambda: ["/etc/openvpn/server/server.conf"])
     monkeypatch.setattr(helper, "_unit_state", lambda unit: "active")
     monkeypatch.setattr(helper, "_openvpn_runtime_config_matches", lambda unit, path: False)
+    with pytest.raises(SystemExit):
+        helper.openvpn_get_profile("phone01", "vpn.example.com")
+
+
+def test_openvpn_certificate_is_client_requires_client_auth_eku(monkeypatch, tmp_path):
+    cert = tmp_path / "client.crt"
+    cert.write_text("certificate", encoding="ascii")
+    cert.chmod(0o600)
+    fd = os.open(cert, os.O_RDONLY)
+    monkeypatch.setattr(helper, "_openvpn_trusted_file", lambda path, max_bytes=4 * 1024 * 1024: os.dup(fd))
+    monkeypatch.setattr(helper.shutil, "which", lambda name: "/usr/bin/openssl")
+    monkeypatch.setattr(helper.subprocess, "run", lambda *a, **k:
+        helper.subprocess.CompletedProcess(a[0], 0, "X509v3 Extended Key Usage:\\n TLS Web Client Authentication\\n", ""))
+    assert helper._openvpn_certificate_is_client(str(cert)) is True
+    monkeypatch.setattr(helper.subprocess, "run", lambda *a, **k:
+        helper.subprocess.CompletedProcess(a[0], 0, "X509v3 Extended Key Usage:\\n TLS Web Server Authentication\\n", ""))
+    assert helper._openvpn_certificate_is_client(str(cert)) is False
+    os.close(fd)
+
+
+def test_openvpn_profile_rejects_server_certificate_eku(monkeypatch):
+    monkeypatch.setattr(helper, "_openvpn_unique_pki", lambda: ("/safe/pki", ""))
+    monkeypatch.setattr(helper, "_openvpn_index_clients", lambda value: [{"common_name": "phone01", "status": "valid"}])
+    monkeypatch.setattr(helper, "_openvpn_server_config_paths", lambda: ["/etc/openvpn/server/server.conf"])
+    monkeypatch.setattr(helper, "_unit_state", lambda unit: "active")
+    monkeypatch.setattr(helper, "_openvpn_runtime_config_matches", lambda unit, path: True)
+    monkeypatch.setattr(helper, "_openvpn_config_directives", lambda path: {})
+    monkeypatch.setattr(helper, "_openvpn_certificate_is_client", lambda path: False)
     with pytest.raises(SystemExit):
         helper.openvpn_get_profile("phone01", "vpn.example.com")
