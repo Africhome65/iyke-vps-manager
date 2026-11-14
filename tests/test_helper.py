@@ -150,6 +150,38 @@ def test_openvpn_crl_state_checks_relative_crl_file(tmp_path, monkeypatch):
     }
 
 
+def test_openvpn_crl_state_ignores_commented_directive(tmp_path, monkeypatch):
+    config = tmp_path / "server.conf"
+    config.write_text("# crl-verify crl.pem\\nport 1194\\n", encoding="utf-8")
+    monkeypatch.setattr(helper.os, "lstat", lambda path: type("Info", (), {
+        "st_mode": stat.S_IFREG | 0o644, "st_uid": 0, "st_nlink": 1
+    })())
+    assert helper._openvpn_crl_state(str(config)) == {
+        "crl_configured": False, "crl_file_present": False
+    }
+
+
+def test_openvpn_crl_state_rejects_symlink_crl(tmp_path, monkeypatch):
+    config = tmp_path / "server.conf"
+    target = tmp_path / "actual-crl.pem"
+    link = tmp_path / "crl.pem"
+    config.write_text("crl-verify crl.pem\\n", encoding="utf-8")
+    target.write_text("public CRL data\\n", encoding="utf-8")
+    link.symlink_to(target)
+    real_lstat = helper.os.lstat
+
+    def fake_lstat(path):
+        info = real_lstat(path)
+        return type("Info", (), {
+            "st_mode": info.st_mode, "st_uid": info.st_uid, "st_nlink": info.st_nlink
+        })()
+
+    monkeypatch.setattr(helper.os, "lstat", fake_lstat)
+    assert helper._openvpn_crl_state(str(config)) == {
+        "crl_configured": True, "crl_file_present": False
+    }
+
+
 def test_openvpn_crl_state_reports_missing_crl_file(tmp_path, monkeypatch):
     config = tmp_path / "server.conf"
     config.write_text("crl-verify missing-crl.pem\n", encoding="utf-8")
