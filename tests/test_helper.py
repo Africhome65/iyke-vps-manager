@@ -127,7 +127,7 @@ def test_openvpn_crl_state_reports_missing_directive(tmp_path, monkeypatch):
         "st_mode": stat.S_IFREG | 0o644, "st_uid": 0, "st_nlink": 1
     })())
     assert helper._openvpn_crl_state(str(config)) == {
-        "crl_configured": False, "crl_ready": False
+        "crl_configured": False, "crl_file_present": False
     }
 
 
@@ -146,7 +146,7 @@ def test_openvpn_crl_state_checks_relative_crl_file(tmp_path, monkeypatch):
 
     monkeypatch.setattr(helper.os, "lstat", fake_lstat)
     assert helper._openvpn_crl_state(str(config)) == {
-        "crl_configured": True, "crl_ready": True
+        "crl_configured": True, "crl_file_present": True
     }
 
 
@@ -163,7 +163,7 @@ def test_openvpn_crl_state_reports_missing_crl_file(tmp_path, monkeypatch):
 
     monkeypatch.setattr(helper.os, "lstat", fake_lstat)
     assert helper._openvpn_crl_state(str(config)) == {
-        "crl_configured": True, "crl_ready": False
+        "crl_configured": True, "crl_file_present": False
     }
 
 
