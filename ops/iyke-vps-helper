@@ -325,7 +325,10 @@ def _openvpn_unique_pki(require_ca_key=False):
             ca_key_fd = _openvpn_trusted_file(os.path.join(normalized, "private", "ca.key"), 1024 * 1024)
             if ca_key_fd is None:
                 continue
+            ca_key_info = os.fstat(ca_key_fd)
             os.close(ca_key_fd)
+            if stat.S_IMODE(ca_key_info.st_mode) & 0o077:
+                continue
         candidates.append((normalized, index))
     if len(candidates) != 1:
         fail("No trusted Easy-RSA database found" if not candidates
@@ -390,8 +393,11 @@ def openvpn_create_client(name):
         if key_fd is not None:
             os.close(key_fd)
         fail("Easy-RSA did not produce a safely stored client certificate and key")
+    key_info = os.fstat(key_fd)
     os.close(cert_fd)
     os.close(key_fd)
+    if stat.S_IMODE(key_info.st_mode) & 0o077:
+        fail("Easy-RSA created a client private key with unsafe permissions")
     updated_index = _read_openvpn_index(os.path.join(pki, "index.txt"))
     if updated_index is None or not any(
         row["common_name"] == name and row["status"] == "valid"
