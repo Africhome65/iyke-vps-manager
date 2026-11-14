@@ -119,6 +119,59 @@ def test_vpn_status_reports_missing_software(monkeypatch):
     }
 
 
+def _prepare_xray_state_dir(monkeypatch, tmp_path):
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    state.chmod(0o700)
+    monkeypatch.setattr(helper, "STATE_DIR", str(state))
+    return state
+
+
+def test_xray_create_list_and_revoke_client_keeps_ids_private(tmp_path, monkeypatch):
+    _prepare_xray_state_dir(monkeypatch, tmp_path)
+    monkeypatch.setattr(helper.os.path, "isfile", lambda path: path == "/usr/local/bin/xray")
+    monkeypatch.setattr(helper.os, "access", lambda path, mode: path == "/usr/local/bin/xray")
+    created = helper.xray_create_client("phone01", "vless")
+    assert created["created"] is True
+    assert created["name"] == "phone01"
+    assert created["protocol"] == "vless"
+    assert len(created["id"]) == 36
+    listed = helper.xray_list_clients()
+    assert listed == [{"name": "phone01", "protocol": "vless"}]
+    assert "id" not in listed[0]
+    revoked = helper.xray_revoke_client("phone01")
+    assert revoked == {"revoked": True, "name": "phone01"}
+    assert helper.xray_list_clients() == []
+
+
+def test_xray_create_client_rejects_duplicate_name(tmp_path, monkeypatch):
+    _prepare_xray_state_dir(monkeypatch, tmp_path)
+    monkeypatch.setattr(helper.os.path, "isfile", lambda path: path == "/usr/local/bin/xray")
+    monkeypatch.setattr(helper.os, "access", lambda path, mode: path == "/usr/local/bin/xray")
+    helper.xray_create_client("phone01", "vmess")
+    with pytest.raises(SystemExit):
+        helper.xray_create_client("phone01", "vless")
+
+
+def test_xray_create_client_rejects_invalid_protocol_or_name(tmp_path, monkeypatch):
+    _prepare_xray_state_dir(monkeypatch, tmp_path)
+    monkeypatch.setattr(helper.os.path, "isfile", lambda path: path == "/usr/local/bin/xray")
+    monkeypatch.setattr(helper.os, "access", lambda path, mode: path == "/usr/local/bin/xray")
+    with pytest.raises(SystemExit):
+        helper.xray_create_client("Phone01", "vless")
+    with pytest.raises(SystemExit):
+        helper.xray_create_client("phone01", "trojan")
+
+
+def test_xray_client_registry_rejects_symlink(tmp_path, monkeypatch):
+    state = _prepare_xray_state_dir(monkeypatch, tmp_path)
+    target = tmp_path / "target.json"
+    target.write_text("[]", encoding="utf-8")
+    (state / "xray-clients.json").symlink_to(target)
+    with pytest.raises(SystemExit):
+        helper.xray_list_clients()
+
+
 def test_vpn_status_reports_xray_binary_and_service(monkeypatch):
     monkeypatch.setattr(helper.shutil, "which",
                         lambda command: "/usr/local/bin/xray" if command == "xray" else None)
