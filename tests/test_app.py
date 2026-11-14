@@ -213,10 +213,13 @@ def test_xray_client_create_route_calls_helper_and_does_not_flash_id(client, mon
             stderr=""
         )
     monkeypatch.setattr("app.subprocess.run", fake_run)
-    response = client.post("/vpn/xray/clients", data={"name":"phone01","protocol":"vmess"}, follow_redirects=True)
-    assert response.status_code == 200
-    assert b"phone01" in response.data
-    assert b"12345678-1234-4234-8234-123456789abc" not in response.data
+    response = client.post("/vpn/xray/clients", data={"name":"phone01","protocol":"vmess"})
+    assert response.status_code == 302
+    with client.session_transaction() as session:
+        flashes = session.get("_flashes", [])
+    messages = [message for _, message in flashes]
+    assert any("phone01" in message for message in messages)
+    assert all("12345678-1234-4234-8234-123456789abc" not in message for message in messages)
     request = __import__("json").loads(calls[0][1]["input"])
     assert request == {"action":"xray_create_client","name":"phone01","protocol":"vmess"}
 
