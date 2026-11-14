@@ -489,6 +489,36 @@ def _openvpn_run_easyrsa(easyrsa, pki, arguments):
     return result
 
 
+def _openvpn_crl_contains_serial(crl_path, serial):
+    """Require the generated CRL to contain the exact revoked certificate serial."""
+    if not isinstance(serial, str) or not re.fullmatch(r"[0-9A-Fa-f]{1,64}", serial):
+        return False
+    crl_fd = _openvpn_trusted_file(crl_path, 4 * 1024 * 1024)
+    openssl = shutil.which("openssl")
+    if crl_fd is None or not openssl:
+        if crl_fd is not None:
+            os.close(crl_fd)
+        return False
+    try:
+        result = subprocess.run(
+            [openssl, "crl", "-in", f"/proc/self/fd/{crl_fd}", "-noout", "-text"],
+            text=True, capture_output=True, check=False, timeout=10,
+            pass_fds=(crl_fd,),
+        )
+        if result.returncode != 0:
+            return False
+        expected = serial.lstrip("0").upper() or "0"
+        for value in re.findall(r"Serial Number:\\s*(?:0x)?([0-9A-Fa-f:]+)", result.stdout):
+            normalized = value.replace(":", "").lstrip("0").upper() or "0"
+            if normalized == expected:
+                return True
+        return False
+    except (OSError, subprocess.SubprocessError):
+        return False
+    finally:
+        os.close(crl_fd)
+
+
 def openvpn_revoke_client(name):
     """Revoke one verified client certificate and atomically publish a signed CRL."""
     if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name):
@@ -545,9 +575,11 @@ def openvpn_revoke_client(name):
             if updated_record is None or updated_record["status"] != "revoked":
                 fail("Easy-RSA did not mark the requested certificate as revoked")
             _openvpn_run_easyrsa(easyrsa, pki, ["gen-crl"])
-            new_crl = _openvpn_read_pem(crl_path, "generated CRL")
+            _openvpn_read_pem(crl_path, "generated CRL")
             if not _openvpn_crl_state(config_path).get("crl_file_present"):
                 fail("Generated CRL failed signature or active configuration verification")
+            if not _openvpn_crl_contains_serial(crl_path, record["serial"]):
+                fail("Generated CRL does not contain the revoked certificate serial")
         except SystemExit:
             try:
                 _openvpn_atomic_pki_file(index_path, index_text)
