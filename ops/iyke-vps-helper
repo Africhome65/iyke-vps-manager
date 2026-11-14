@@ -2343,6 +2343,17 @@ def hysteria_start_service():
         subprocess.run([systemctl, "stop", "iyke-hysteria.service"],
                        text=True, capture_output=True, check=False, timeout=30)
         fail("Hysteria started but could not be enabled and verified; the dedicated unit was stopped and disabled")
+    final_active = subprocess.run(
+        [systemctl, "is-active", "iyke-hysteria.service"],
+        text=True, capture_output=True, check=False, timeout=15,
+    )
+    if (final_active.returncode != 0 or final_active.stdout.strip() != "active"
+            or not _hysteria_udp_listener_present(int(config["listen"][1:]))):
+        subprocess.run([systemctl, "disable", "iyke-hysteria.service"],
+                       text=True, capture_output=True, check=False, timeout=30)
+        subprocess.run([systemctl, "stop", "iyke-hysteria.service"],
+                       text=True, capture_output=True, check=False, timeout=30)
+        fail("Hysteria did not remain ready after enablement; the dedicated unit was stopped and disabled")
     return {
         "started": True, "enabled": True, "service_state": "active",
         "service_unit": "iyke-hysteria.service", "firewall_changed": False,
