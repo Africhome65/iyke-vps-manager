@@ -65,9 +65,20 @@
       <h3>Certificate inventory (read-only)</h3>
       {% if openvpn_inventory.available %}
         {% if openvpn_inventory.clients %}
-          <p class="muted">Easy-RSA certificate records. This list may include the VPN server certificate; no certificate or private-key files are opened.</p>
+          <p class="muted">Easy-RSA certificate records. Server certificates are protected: the helper checks TLS client-authentication purpose before allowing revocation. The server is not restarted automatically after CRL regeneration.</p>
           <div class="vpn-list">{% for cert in openvpn_inventory.clients %}
-            <div class="vpn-instance"><div><b>{{ cert.common_name }}</b><small class="muted">Expires {{ cert.expires }} · Serial {{ cert.serial }}</small></div><span class="vpn-state {{ 'available' if cert.status == 'valid' else 'missing' }}">{{ cert.status|title }}</span></div>
+            <div class="vpn-instance">
+              <div><b>{{ cert.common_name }}</b><small class="muted">Expires {{ cert.expires }} · Serial {{ cert.serial }}</small></div>
+              <div class="inline">
+                <span class="vpn-state {{ 'available' if cert.status == 'valid' else 'missing' }}">{{ cert.status|title }}</span>
+                {% if cert.status == 'valid' and cert.common_name not in ['root', 'server', 'ca'] %}
+                  <form method="post" action="{{ url_for('revoke_openvpn_client', name=cert.common_name) }}" class="inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button class="secondary" type="submit">Revoke</button>
+                  </form>
+                {% endif %}
+              </div>
+            </div>
           {% endfor %}</div>
         {% else %}<p class="empty">The Easy-RSA database was found, but it contains no readable certificate records.</p>{% endif %}
       {% else %}<p class="muted">{{ openvpn_inventory.reason }}. Inventory is unavailable; no changes have been made.</p>{% endif %}
