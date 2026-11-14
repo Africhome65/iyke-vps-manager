@@ -46,11 +46,24 @@ On explicit confirmation, the helper should atomically write a dedicated config 
 - Escape URI components correctly and do not include `insecure=1`.
 - Do not expose the password in audit details, logs, status output, or generic flash messages.
 
+## Automatic TLS: restricted ACME HTTP-01
+
+The first automatic TLS option uses Hysteria 2's built-in ACME HTTP-01 challenge. It is deliberately restricted to a narrow, verifiable host setup:
+
+- The domain must resolve only to this VPS's detected public IPv4 address.
+- An AAAA record is rejected until IPv6 destination verification is implemented.
+- TCP port 80 must be demonstrably free at preview, firewall approval, and service-start time. The manager never stops, reconfigures, or proxies through Caddy, Nginx, Apache, or another listener.
+- UFW must be active. A separate administrator confirmation may add only `80/tcp`; existing deny/reject rules are not overridden.
+- The VPS provider/network firewall must independently permit inbound TCP/80. The manager cannot verify or modify that external firewall.
+- The dedicated systemd service receives only `CAP_NET_BIND_SERVICE` in its capability bounding set and ambient capabilities so the unprivileged Hysteria account can bind TCP/80.
+- ACME account material is stored under `/var/lib/iyke-hysteria/acme`, in a directory owned by the Hysteria service account with mode 0700.
+- The service is not started during configuration. On explicit start, the manager rechecks TCP/80 and UFW; Hysteria obtains/renews the certificate before its server becomes active. TCP/80 must remain reachable for future renewals.
+
+This first HTTP-01 implementation does not attempt to configure a reverse proxy, use alternate challenge ports, handle AAAA records, or manage cloud-provider firewalls. If port 80 is occupied or cannot be verified, use the manual certificate path instead.
+
 ## Later TLS methods
 
-After the manual-certificate flow is tested end to end, add:
-- Built-in ACME HTTP-01 only when the required TCP challenge port is demonstrably available and the administrator approves any listener changes.
-- DNS-01 only for explicitly supported provider integrations, with provider credentials stored in a root-only secret file and never echoed back to the web app or logs.
+- Add DNS-01 only for explicitly supported provider integrations, with provider credentials stored in a root-only secret file and never echoed back to the web app or logs.
 
 Do not claim support for every DNS provider. Do not silently fall back from a failed secure TLS method to insecure TLS.
 
