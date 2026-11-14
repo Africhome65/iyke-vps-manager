@@ -579,10 +579,14 @@ def openvpn_get_profile(name, endpoint):
         tls_path = tls_auth[0][0]
         tls_path = tls_path if os.path.isabs(tls_path) else os.path.join(base, tls_path)
         tls_data = _openvpn_read_pem(os.path.abspath(tls_path), "tls-auth key")
-        direction = tls_auth[0][1] if len(tls_auth[0]) == 2 else "0"
-        if direction not in {"0", "1"}:
+        direction = tls_auth[0][1] if len(tls_auth[0]) == 2 else None
+        if direction is not None and direction not in {"0", "1"}:
             fail("OpenVPN tls-auth direction is invalid")
-        profile.extend(["<tls-auth>", tls_data.rstrip(), "</tls-auth>", "key-direction " + ("1" if direction == "0" else "0")])
+        profile.extend(["<tls-auth>", tls_data.rstrip(), "</tls-auth>"])
+        # OpenVPN's default is bidirectional when the server omits key-direction.
+        # Only emit the inverse when the server explicitly configures a direction.
+        if direction is not None:
+            profile.append("key-direction " + ("1" if direction == "0" else "0"))
     for key_name in ("cipher", "auth"):
         value = _openvpn_single_directive(directives, key_name)
         if value and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", value):
