@@ -2332,6 +2332,266 @@ def hysteria_firewall_open_udp():
     }
 
 
+
+HYSTERIA_ACME_PARENT = "/var/lib/iyke-hysteria"
+HYSTERIA_ACME_DIR = "/var/lib/iyke-hysteria/acme"
+
+
+def _hysteria_tcp_listener_check(port):
+    ss = shutil.which("ss")
+    if not ss:
+        fail("Socket inspection is unavailable; cannot safely check the HTTP-01 listener port")
+    try:
+        result = subprocess.run([ss, "-H", "-ltn"], text=True, capture_output=True,
+                                check=False, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        fail("TCP listener inspection failed; no changes were made")
+    if result.returncode != 0:
+        fail("TCP listener inspection failed; no changes were made")
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) < 4:
+            fail("TCP listener output could not be safely interpreted")
+        local_address = fields[3]
+        try:
+            local_port = int(local_address.rsplit(":", 1)[1])
+        except (ValueError, IndexError):
+            fail("TCP listener output could not be safely interpreted")
+        if local_port == port:
+            return False
+    return True
+
+
+def _hysteria_http01_preflight(domain, port):
+    endpoint = hysteria_validate(domain, str(port))
+    if len(endpoint["udp_ports"]) != 1:
+        fail("Configure exactly one Hysteria UDP port")
+    readiness = hysteria_readiness(endpoint["domain"], str(port))
+    if (not readiness.get("dns_resolves") or not readiness.get("ports_checked")
+            or not readiness.get("available_ports")):
+        fail("The domain must resolve and the selected Hysteria UDP port must be verifiably free")
+    if not _hysteria_tcp_listener_check(80):
+        fail("TCP port 80 is already in use; HTTP-01 cannot take over an existing web server")
+    getent = shutil.which("getent")
+    if not getent:
+        fail("DNS inspection is unavailable; HTTP-01 preflight cannot continue")
+    try:
+        ipv4_result = subprocess.run([getent, "ahostsv4", endpoint["domain"]],
+                                     text=True, capture_output=True, check=False, timeout=10)
+        ipv6_result = subprocess.run([getent, "ahostsv6", endpoint["domain"]],
+                                     text=True, capture_output=True, check=False, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        fail("DNS address verification failed; no changes were made")
+    if ipv4_result.returncode != 0 or ipv6_result.returncode == 0 and ipv6_result.stdout.strip():
+        fail("HTTP-01 currently requires one IPv4 destination; remove or correctly configure any AAAA record first")
+    dns_ipv4 = sorted({line.split()[0] for line in ipv4_result.stdout.splitlines() if line.split()})
+    if not dns_ipv4:
+        fail("The domain has no verifiable IPv4 address")
+    try:
+        request = urllib.request.Request(
+            "https://api.ipify.org", headers={"User-Agent": "Iyke-VPS-Manager/1.0"}
+        )
+        with urllib.request.urlopen(request, timeout=8) as response:
+            public_ip = str(ipaddress.IPv4Address(response.read(64).decode("ascii").strip()))
+    except (OSError, UnicodeDecodeError, ValueError):
+        fail("Unable to verify this VPS public IPv4 address; HTTP-01 setup is unavailable")
+    if dns_ipv4 != [public_ip]:
+        fail("The domain's IPv4 DNS records must point only to this VPS public IPv4 address")
+    ufw = shutil.which("ufw")
+    if not ufw:
+        fail("UFW is required for the first HTTP-01 release; other firewall managers are not yet supported")
+    status = subprocess.run([ufw, "status"], text=True, capture_output=True,
+                            check=False, timeout=20)
+    if status.returncode != 0 or not re.search(r"^Status:\\s+active\\s*$", status.stdout, re.I | re.M):
+        fail("UFW must be active so TCP port 80 can be checked and managed safely")
+    allow = False
+    deny = False
+    for line in status.stdout.splitlines():
+        match = re.match(r"^\\s*(80)(?:/(tcp|udp))?\\s+(ALLOW|DENY|REJECT)\\s+IN\\b", line, re.I)
+        if match and (match.group(2) or "any").lower() in {"tcp", "any"}:
+            if match.group(3).upper() == "ALLOW":
+                allow = True
+            else:
+                deny = True
+    if deny:
+        fail("An existing UFW deny/reject rule overlaps TCP port 80; resolve it manually")
+    return {
+        "valid": True, "domain": endpoint["domain"], "udp_port": port,
+        "dns_ipv4": dns_ipv4, "vps_public_ipv4": public_ip,
+        "tcp80_available": True, "ufw_active": True,
+        "tcp80_allowed": allow, "firewall_changed": False,
+        "service_changed": False, "configuration_written": False,
+    }
+
+
+def hysteria_http01_preview(domain, port):
+    return _hysteria_http01_preflight(domain, port)
+
+
+def hysteria_configure_http01(domain, port, email):
+    if os.geteuid() != 0:
+        fail("Hysteria ACME configuration requires the privileged helper")
+    if not isinstance(email, str) or len(email) > 254 or not re.fullmatch(
+            r"[A-Za-z0-9.!#$%&'*+/=?^_\x60{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+",
+            email.strip()):
+        fail("Enter a valid email address for certificate expiry and ACME notices")
+    email = email.strip()
+    preview = _hysteria_http01_preflight(domain, port)
+    binary = shutil.which("hysteria")
+    systemctl = shutil.which("systemctl")
+    systemd_analyze = shutil.which("systemd-analyze")
+    if not binary or not os.path.isfile(binary) or not os.access(binary, os.X_OK):
+        fail("Install the official Hysteria 2 binary before configuring ACME")
+    if not systemctl or not systemd_analyze:
+        fail("systemd verification tools are unavailable")
+    try:
+        group = grp.getgrnam("hysteria")
+        account = pwd.getpwnam("hysteria")
+    except (KeyError, NameError):
+        fail("The Hysteria service account or group is unavailable")
+    for directory in ("/etc", "/etc/hysteria", "/etc/systemd", "/etc/systemd/system", "/var", "/var/lib"):
+        try:
+            info = os.lstat(directory)
+        except OSError:
+            fail("A required system directory is unavailable")
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or stat.S_IMODE(info.st_mode) & 0o022:
+            fail("A required system directory has unsafe ownership or permissions")
+    for path in (HYSTERIA_CONFIG_PATH, HYSTERIA_UNIT_PATH, HYSTERIA_ACME_PARENT):
+        if os.path.lexists(path):
+            fail("A dedicated Hysteria configuration or ACME directory already exists; refusing to overwrite it")
+    password = secrets.token_urlsafe(32)
+    config = {
+        "listen": ":" + str(preview["udp_port"]),
+        "acme": {
+            "domains": [preview["domain"]], "email": email,
+            "type": "http", "dir": HYSTERIA_ACME_DIR,
+        },
+        "auth": {"type": "password", "password": password},
+    }
+    config_text = json.dumps(config, ensure_ascii=True, indent=2) + "\\n"
+    unit_text = (
+        "[Unit]\\nDescription=Iyke VPS Manager Hysteria 2 server\\n"
+        "After=network-online.target\\nWants=network-online.target\\n\\n"
+        "[Service]\\nType=simple\\nUser=hysteria\\nGroup=hysteria\\n"
+        f"ExecStart={binary} server --config {HYSTERIA_CONFIG_PATH}\\n"
+        "Restart=on-failure\\nRestartSec=5s\\nNoNewPrivileges=true\\n"
+        "PrivateTmp=true\\nProtectSystem=full\\nProtectHome=read-only\\n"
+        "UMask=0027\\n\\n[Install]\\nWantedBy=multi-user.target\\n"
+    )
+    parent_created = False
+    acme_created = False
+    config_written = False
+    unit_written = False
+    try:
+        os.mkdir(HYSTERIA_ACME_PARENT, 0o750)
+        parent_created = True
+        os.chown(HYSTERIA_ACME_PARENT, 0, group.gr_gid)
+        os.chmod(HYSTERIA_ACME_PARENT, 0o750)
+        os.mkdir(HYSTERIA_ACME_DIR, 0o700)
+        acme_created = True
+        os.chown(HYSTERIA_ACME_DIR, account.pw_uid, group.gr_gid)
+        os.chmod(HYSTERIA_ACME_DIR, 0o700)
+        _hysteria_atomic_write(HYSTERIA_CONFIG_PATH, config_text, 0o640, group.gr_gid)
+        config_written = True
+        _hysteria_atomic_write(HYSTERIA_UNIT_PATH, unit_text, 0o644, 0)
+        unit_written = True
+        verify = subprocess.run([systemd_analyze, "verify", HYSTERIA_UNIT_PATH],
+                                text=True, capture_output=True, check=False, timeout=30)
+        if verify.returncode != 0:
+            raise RuntimeError("systemd rejected the dedicated Hysteria service unit")
+        reload_result = subprocess.run([systemctl, "daemon-reload"], text=True,
+                                       capture_output=True, check=False, timeout=30)
+        if reload_result.returncode != 0:
+            raise RuntimeError("systemd could not reload the dedicated Hysteria unit")
+    except (RuntimeError, OSError, subprocess.TimeoutExpired):
+        for path, created in ((HYSTERIA_UNIT_PATH, unit_written),
+                              (HYSTERIA_CONFIG_PATH, config_written)):
+            if created:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+        for path, created in ((HYSTERIA_ACME_DIR, acme_created),
+                              (HYSTERIA_ACME_PARENT, parent_created)):
+            if created:
+                try:
+                    os.rmdir(path)
+                except OSError:
+                    pass
+        try:
+            subprocess.run([systemctl, "daemon-reload"], text=True,
+                           capture_output=True, check=False, timeout=30)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        fail("Hysteria ACME configuration could not be applied; newly created files were rolled back")
+    uri = (
+        "hysteria2://" + urllib.parse.quote(password, safe="")
+        + "@" + preview["domain"] + ":" + str(preview["udp_port"])
+        + "/?sni=" + urllib.parse.quote(preview["domain"], safe="")
+        + "#Iyke-VPS-Manager"
+    )
+    return {
+        "configured": True, "tls_mode": "acme-http01",
+        "domain": preview["domain"], "udp_port": preview["udp_port"],
+        "config_path": HYSTERIA_CONFIG_PATH, "service_unit": "iyke-hysteria.service",
+        "service_state": "not-started", "service_enabled": False,
+        "firewall_changed": False, "password": password, "client_uri": uri,
+        "warning": "Save the password and client URI now. TCP port 80 must remain reachable for certificate renewals.",
+    }
+
+
+def hysteria_firewall_open_http01_tcp():
+    if os.geteuid() != 0:
+        fail("Changing the firewall requires the privileged helper")
+    if not _hysteria_tcp_listener_check(80):
+        fail("TCP port 80 is now occupied; refusing to start the HTTP-01 listener")
+    try:
+        with open(HYSTERIA_CONFIG_PATH, "r", encoding="utf-8") as source:
+            config = json.load(source)
+    except (OSError, ValueError):
+        fail("The dedicated Hysteria configuration is unavailable")
+    acme = config.get("acme") if isinstance(config, dict) else None
+    if not isinstance(acme, dict) or acme.get("type") != "http":
+        fail("The configured Hysteria instance does not use HTTP-01")
+    ufw = shutil.which("ufw")
+    if not ufw:
+        fail("UFW is unavailable; no firewall changes were made")
+    status = subprocess.run([ufw, "status"], text=True, capture_output=True,
+                            check=False, timeout=20)
+    if status.returncode != 0 or not re.search(r"^Status:\\s+active\\s*$", status.stdout, re.I | re.M):
+        fail("UFW is not verifiably active; no firewall changes were made")
+    allow = False
+    deny = False
+    for line in status.stdout.splitlines():
+        match = re.match(r"^\\s*80(?:/(tcp|udp))?\\s+(ALLOW|DENY|REJECT)\\s+IN\\b", line, re.I)
+        if match and (match.group(1) or "any").lower() in {"tcp", "any"}:
+            if match.group(2).upper() == "ALLOW":
+                allow = True
+            else:
+                deny = True
+    if deny:
+        fail("An existing UFW deny/reject rule overlaps TCP port 80; resolve it manually")
+    if allow:
+        return {"opened": True, "already_allowed": True, "firewall_changed": False,
+                "firewall": "ufw", "tcp_port": 80}
+    added = subprocess.run([ufw, "allow", "80/tcp", "comment", "Iyke VPS Manager Hysteria ACME HTTP-01"],
+                           text=True, capture_output=True, check=False, timeout=30)
+    if added.returncode != 0:
+        fail("UFW did not accept the TCP/80 rule; no other firewall was changed")
+    verify = subprocess.run([ufw, "status"], text=True, capture_output=True,
+                            check=False, timeout=20)
+    confirmed = verify.returncode == 0 and any(
+        re.match(r"^\\s*80(?:/tcp)?\\s+ALLOW\\s+IN\\b", line, re.I)
+        for line in verify.stdout.splitlines()
+    )
+    if not confirmed:
+        subprocess.run([ufw, "--force", "delete", "allow", "80/tcp"],
+                       text=True, capture_output=True, check=False, timeout=30)
+        fail("The TCP/80 UFW rule could not be verified; the new rule was rolled back")
+    return {"opened": True, "already_allowed": False, "firewall_changed": True,
+            "firewall": "ufw", "tcp_port": 80}
+
+
 def hysteria_validate(domain, ports):
     """Validate a Hysteria endpoint request without changing the host."""
     if not isinstance(domain, str):
