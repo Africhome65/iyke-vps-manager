@@ -843,10 +843,10 @@ def test_openvpn_get_profile_builds_inline_profile_only_for_verified_server(monk
 @pytest.mark.parametrize(
     ("serial", "crl_text", "expected"),
     [
-        ("01", "Serial Number: 01\\n", True),
-        ("000A", "Serial Number: 0a\\n", True),
-        ("01", "Serial Number: 02\\n", False),
-        ("not-hex", "Serial Number: 01\\n", False),
+        ("01", "Serial Number: 01\n", True),
+        ("000A", "Serial Number: 0a\n", True),
+        ("01", "Serial Number: 02\n", False),
+        ("not-hex", "Serial Number: 01\n", False),
     ],
 )
 def test_openvpn_crl_contains_exact_revoked_serial(
