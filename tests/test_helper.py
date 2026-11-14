@@ -912,6 +912,58 @@ def test_hysteria_install_uses_pinned_official_installer_in_transient_service(mo
     assert kwargs["timeout"] == 330
 
 
+
+def test_hysteria_single_port_preview_checks_tls_and_is_read_only(monkeypatch, tmp_path):
+    cert = tmp_path / "fullchain.pem"
+    key = tmp_path / "privkey.pem"
+    cert.write_text("certificate", encoding="utf-8")
+    key.write_text("private key", encoding="utf-8")
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        if command[:3] == ["getent", "passwd", "hysteria"]:
+            return helper.subprocess.CompletedProcess(command, 0, "hysteria:x:998:998::/nonexistent:/usr/sbin/nologin", "")
+        if command[0] == "/usr/bin/runuser":
+            return helper.subprocess.CompletedProcess(command, 0, "", "")
+        if "-checkhost" in command or "-checkend" in command or command[-2:] == ["-noout", "-check"]:
+            return helper.subprocess.CompletedProcess(command, 0, "OK", "")
+        if "-pubkey" in command or "-pubout" in command:
+            return helper.subprocess.CompletedProcess(command, 0, "PUBLIC KEY", "")
+        if command[0] == "/usr/bin/getent":
+            return helper.subprocess.CompletedProcess(command, 0, "203.0.113.5 STREAM example.com\\n", "")
+        return helper.subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper.shutil, "which", lambda name: {
+        "openssl": "/usr/bin/openssl", "runuser": "/usr/bin/runuser",
+        "getent": "/usr/bin/getent", "ss": "/usr/bin/ss"
+    }.get(name))
+    monkeypatch.setattr(helper.subprocess, "run", fake_run)
+    result = helper.hysteria_single_port_preview("example.com", "8443", str(cert), str(key))
+    assert result["valid"] is True
+    assert result["certificate_key_match"] is True
+    assert result["configuration_written"] is False
+    assert result["service_changed"] is False
+    assert result["firewall_changed"] is False
+    assert cert.read_text(encoding="utf-8") == "certificate"
+    assert key.read_text(encoding="utf-8") == "private key"
+
+
+@pytest.mark.parametrize("cert_path,key_path", [
+    ("relative.pem", "/tmp/key.pem"),
+    ("/tmp/cert.pem", "relative.pem"),
+    ("/tmp/cert.pem", "/tmp/key\\x00.pem"),
+])
+def test_hysteria_single_port_preview_rejects_unsafe_paths(cert_path, key_path):
+    with pytest.raises(SystemExit):
+        helper.hysteria_single_port_preview("example.com", "8443", cert_path, key_path)
+
+
+def test_hysteria_single_port_preview_rejects_multiple_ports():
+    with pytest.raises(SystemExit):
+        helper.hysteria_single_port_preview("example.com", "8443,9443", "/tmp/cert.pem", "/tmp/key.pem")
+
+
 def test_hysteria_validate_accepts_separate_udp_ports_without_side_effects():
     result = helper.hysteria_validate("VPN.Example.com.", "53, 8443")
     assert result == {
