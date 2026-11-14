@@ -487,3 +487,36 @@ def test_xray_install_uses_pinned_official_installer_in_transient_service(monkey
 def test_xray_action_rejects_unexpected_fields():
     with pytest.raises(SystemExit):
         helper.handle_xray_action({"action": "xray_install", "domain": "example.com"})
+
+
+
+def test_xray_profile_requires_live_registered_identity(tmp_path, monkeypatch):
+    _prepare_xray_state_dir(monkeypatch, tmp_path)
+    monkeypatch.setattr(helper, "_load_xray_clients", lambda: [{
+        "name": "phone01", "protocol": "vless",
+        "id": "00000000-0000-4000-8000-000000000001"
+    }])
+    monkeypatch.setattr(helper, "_xray_config_has_client", lambda protocol, client_id: True)
+    monkeypatch.setattr(helper, "_xray_config_summary", lambda: {
+        "config_status": "readable",
+        "inbounds": [{"protocol": "vless", "listen": "127.0.0.1", "port": 10001,
+                      "network": "ws", "security": "none", "path": "/vless"}]
+    })
+    monkeypatch.setattr(helper, "_caddy_public_hostname", lambda: "vpn.example.net")
+    result = helper.xray_get_client_profile("phone01")
+    assert result == {
+        "name": "phone01", "protocol": "vless",
+        "id": "00000000-0000-4000-8000-000000000001",
+        "hostname": "vpn.example.net", "path": "/vless", "port": 443
+    }
+
+
+def test_xray_profile_refuses_registry_only_identity(tmp_path, monkeypatch):
+    _prepare_xray_state_dir(monkeypatch, tmp_path)
+    monkeypatch.setattr(helper, "_load_xray_clients", lambda: [{
+        "name": "phone01", "protocol": "vless",
+        "id": "00000000-0000-4000-8000-000000000001"
+    }])
+    monkeypatch.setattr(helper, "_xray_config_has_client", lambda protocol, client_id: False)
+    with pytest.raises(SystemExit):
+        helper.xray_get_client_profile("phone01")
