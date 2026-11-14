@@ -321,7 +321,7 @@ def test_openvpn_client_issuance_route_requires_login_and_calls_helper(client, m
     assert response.status_code == 302
     request = __import__("json").loads(calls[0][1]["input"])
     assert request == {"action": "openvpn_create_client", "name": "phone01"}
-    assert calls[0][1]["timeout"] == 120
+    assert calls[0][1]["timeout"] == 360
 
 
 def test_openvpn_client_issuance_route_rejects_invalid_name_before_helper(client, monkeypatch):
