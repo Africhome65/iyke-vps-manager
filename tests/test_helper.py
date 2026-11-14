@@ -985,7 +985,8 @@ def test_hysteria_configure_single_port_writes_dedicated_disabled_service(monkey
     monkeypatch.setattr(helper.os, "fchown", lambda *args: None)
     monkeypatch.setattr(helper.grp, "getgrnam", lambda name: types.SimpleNamespace(gr_gid=998))
     monkeypatch.setattr(helper.shutil, "which", lambda name: {
-        "hysteria": "/usr/local/bin/hysteria", "systemctl": "/usr/bin/systemctl"
+        "hysteria": "/usr/local/bin/hysteria", "systemctl": "/usr/bin/systemctl",
+        "systemd-analyze": "/usr/bin/systemd-analyze"
     }.get(name))
     monkeypatch.setattr(helper.os.path, "isfile", lambda path: path == "/usr/local/bin/hysteria")
     monkeypatch.setattr(helper.os, "access", lambda path, mode: True)
@@ -1018,7 +1019,10 @@ def test_hysteria_configure_single_port_writes_dedicated_disabled_service(monkey
     assert "iyke.yaml" in unit
     assert config_path.stat().st_mode & 0o777 == 0o640
     assert unit_path.stat().st_mode & 0o777 == 0o644
-    assert commands == [["/usr/bin/systemctl", "daemon-reload"]]
+    assert commands == [
+        ["/usr/bin/systemd-analyze", "verify", str(unit_path)],
+        ["/usr/bin/systemctl", "daemon-reload"],
+    ]
     assert result["client_uri"].startswith("hysteria2://")
 
 
