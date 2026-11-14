@@ -469,7 +469,7 @@ def test_openvpn_crl_state_rejects_server_ca_mismatch(tmp_path, monkeypatch):
         (pki / name).mkdir(parents=True, mode=0o700)
         (pki / name).chmod(0o700)
     pki.chmod(0o700)
-    config.write_text("ca other-ca.crt\\ncrl-verify pki/crl.pem\\n", encoding="utf-8")
+    config.write_text("ca other-ca.crt\ncrl-verify pki/crl.pem\n", encoding="utf-8")
     config.chmod(0o600)
     for name in ("crl.pem", "ca.crt"):
         (pki / name).write_text("public material\\n", encoding="utf-8")
@@ -1341,7 +1341,8 @@ def test_openvpn_revoke_client_regenerates_verified_crl(tmp_path, monkeypatch):
     monkeypatch.setattr(helper, "_openvpn_unique_pki", lambda require_ca_key=False: (str(pki), initial))
     monkeypatch.setattr(helper, "_safe_root_directory", lambda path: True)
     monkeypatch.setattr(helper.os, "fstat", lambda fd: type("Info", (), {
-        "st_mode": stat.S_IFREG | 0o600, "st_uid": 0, "st_nlink": 1
+        "st_mode": stat.S_IFREG | 0o600, "st_uid": 0, "st_nlink": 1,
+        "st_size": 128
     })())
     monkeypatch.setattr(helper, "_read_openvpn_index", lambda path: index_state["value"])
     monkeypatch.setattr(helper, "_openvpn_certificate_is_client", lambda path: True)
