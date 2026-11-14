@@ -410,6 +410,183 @@ def openvpn_create_client(name):
     return {"created": True, "name": name}
 
 
+
+def _openvpn_server_config_paths():
+    paths = []
+    for directory in ("/etc/openvpn/server", "/etc/openvpn"):
+        if not _safe_root_directory(directory):
+            continue
+        try:
+            entries = sorted(os.scandir(directory), key=lambda entry: entry.name)
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.name.endswith(".conf") and entry.is_file(follow_symlinks=False):
+                path = os.path.join(directory, entry.name)
+                if _safe_root_directory(directory):
+                    paths.append(path)
+    return list(dict.fromkeys(paths))
+
+
+def _openvpn_config_directives(config_path):
+    fd = _openvpn_trusted_file(config_path, 1024 * 1024)
+    if fd is None:
+        fail("OpenVPN server configuration is missing or unsafe")
+    try:
+        with os.fdopen(fd, "r", encoding="utf-8") as source:
+            fd = -1
+            lines = source.read(1024 * 1024 + 1).splitlines()
+    except (OSError, UnicodeDecodeError):
+        fail("OpenVPN server configuration could not be read safely")
+    finally:
+        if fd >= 0:
+            os.close(fd)
+    directives = {}
+    for raw in lines:
+        line = raw.split("#", 1)[0].split(";", 1)[0].strip()
+        if not line:
+            continue
+        parts = line.split()
+        key = parts[0].lower()
+        if key in {"port", "proto", "dev", "ca", "cert", "key", "tls-auth",
+                   "tls-crypt", "tls-crypt-v2", "cipher", "data-ciphers",
+                   "auth", "remote-cert-tls", "verify-client-cert"}:
+            directives.setdefault(key, []).append(parts[1:])
+    return directives
+
+
+def _openvpn_read_pem(path, label, max_bytes=1024 * 1024):
+    fd = _openvpn_trusted_file(path, max_bytes)
+    if fd is None:
+        fail("Required OpenVPN " + label + " file is missing or unsafe")
+    try:
+        with os.fdopen(fd, "r", encoding="ascii") as source:
+            fd = -1
+            value = source.read(max_bytes + 1)
+    except (OSError, UnicodeDecodeError):
+        fail("Required OpenVPN " + label + " file is invalid")
+    finally:
+        if fd >= 0:
+            os.close(fd)
+    if len(value) > max_bytes or not value.endswith("\\n"):
+        fail("Required OpenVPN " + label + " file is invalid")
+    return value
+
+
+def _openvpn_single_directive(directives, key, default=None):
+    values = directives.get(key, [])
+    if not values:
+        return default
+    if len(values) != 1 or len(values[0]) != 1 or not values[0][0]:
+        fail("OpenVPN server configuration has an ambiguous " + key + " directive")
+    return values[0][0]
+
+
+def openvpn_get_profile(name, endpoint):
+    """Build an inline client profile only for a narrowly validated server config."""
+    if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name):
+        fail("Invalid OpenVPN client name")
+    if not isinstance(endpoint, str) or len(endpoint) > 253:
+        fail("Enter this VPS public DNS name or IP address")
+    endpoint = endpoint.strip().rstrip(".")
+    try:
+        address = ipaddress.ip_address(endpoint)
+        if not address.is_global:
+            fail("OpenVPN endpoint must be a public IP address or DNS name")
+        endpoint = str(address)
+    except ValueError:
+        if not re.fullmatch(
+            r"(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*",
+            endpoint
+        ):
+            fail("Enter a valid public DNS name or IP address")
+
+    pki, index_text = _openvpn_unique_pki()
+    records = _openvpn_index_clients(index_text)
+    if not any(row["common_name"] == name and row["status"] == "valid" for row in records):
+        fail("A valid client certificate for this name was not found")
+    config_paths = _openvpn_server_config_paths()
+    matching = []
+    for path in config_paths:
+        unit = ("openvpn-server@" if os.path.dirname(path) == "/etc/openvpn/server"
+                else "openvpn@") + os.path.basename(path)[:-5] + ".service"
+        if _unit_state(unit) != "active" or not _openvpn_runtime_config_matches(unit, path):
+            continue
+        directives = _openvpn_config_directives(path)
+        matching.append((path, directives))
+    if len(matching) != 1:
+        fail("Exactly one active OpenVPN server configuration must be verified")
+    config_path, directives = matching[0]
+
+    port_text = _openvpn_single_directive(directives, "port", "1194")
+    proto = _openvpn_single_directive(directives, "proto", "udp").lower()
+    dev = _openvpn_single_directive(directives, "dev", "tun").lower()
+    if not port_text.isdigit() or not 1 <= int(port_text) <= 65535:
+        fail("OpenVPN server port is invalid")
+    if proto not in {"udp", "udp4", "udp6", "tcp", "tcp4", "tcp6", "tcp-server"}:
+        fail("This OpenVPN transport is not supported for profile generation")
+    if dev not in {"tun", "tun0"}:
+        fail("Only tun-mode OpenVPN server configurations are supported")
+    if _openvpn_single_directive(directives, "verify-client-cert", "1").lower() in {"none", "optional"}:
+        fail("Server configuration does not require client certificates")
+
+    base = os.path.dirname(config_path)
+    def config_file(key, fallback):
+        value = _openvpn_single_directive(directives, key, fallback)
+        path = value if os.path.isabs(value) else os.path.join(base, value)
+        return os.path.abspath(path)
+
+    ca_path = config_file("ca", os.path.join(pki, "ca.crt"))
+    cert_path = os.path.join(pki, "issued", name + ".crt")
+    key_path = os.path.join(pki, "private", name + ".key")
+    ca = _openvpn_read_pem(ca_path, "CA certificate")
+    cert = _openvpn_read_pem(cert_path, "client certificate")
+    key = _openvpn_read_pem(key_path, "client private key")
+    if "PRIVATE KEY-----" not in key or "BEGIN CERTIFICATE" not in cert or "BEGIN CERTIFICATE" not in ca:
+        fail("OpenVPN certificate material is not in the expected PEM format")
+
+    profile = [
+        "client", "dev tun", "proto " + ("tcp-client" if proto.startswith("tcp") else "udp"),
+        "remote " + endpoint + " " + port_text, "resolv-retry infinite",
+        "nobind", "persist-key", "persist-tun", "remote-cert-tls server",
+        "verb 3", "auth-nocache", "<ca>", ca.rstrip(), "</ca>",
+        "<cert>", cert.rstrip(), "</cert>", "<key>", key.rstrip(), "</key>",
+    ]
+    tls_crypt = directives.get("tls-crypt", [])
+    tls_auth = directives.get("tls-auth", [])
+    tls_crypt_v2 = directives.get("tls-crypt-v2", [])
+    if sum(bool(x) for x in (tls_crypt, tls_auth, tls_crypt_v2)) > 1:
+        fail("Server configuration has conflicting TLS key modes")
+    if tls_crypt_v2:
+        fail("tls-crypt-v2 client profiles are not supported yet")
+    if tls_crypt:
+        if len(tls_crypt) != 1 or len(tls_crypt[0]) not in {1, 2}:
+            fail("OpenVPN tls-crypt directive is ambiguous")
+        tls_path = tls_crypt[0][0]
+        tls_path = tls_path if os.path.isabs(tls_path) else os.path.join(base, tls_path)
+        tls_data = _openvpn_read_pem(os.path.abspath(tls_path), "tls-crypt key")
+        profile.extend(["<tls-crypt>", tls_data.rstrip(), "</tls-crypt>"])
+    if tls_auth:
+        if len(tls_auth) != 1 or len(tls_auth[0]) not in {1, 2}:
+            fail("OpenVPN tls-auth directive is ambiguous")
+        tls_path = tls_auth[0][0]
+        tls_path = tls_path if os.path.isabs(tls_path) else os.path.join(base, tls_path)
+        tls_data = _openvpn_read_pem(os.path.abspath(tls_path), "tls-auth key")
+        direction = tls_auth[0][1] if len(tls_auth[0]) == 2 else "0"
+        if direction not in {"0", "1"}:
+            fail("OpenVPN tls-auth direction is invalid")
+        profile.extend(["<tls-auth>", tls_data.rstrip(), "</tls-auth>", "key-direction " + ("1" if direction == "0" else "0")])
+    for key_name in ("cipher", "auth"):
+        value = _openvpn_single_directive(directives, key_name)
+        if value and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", value):
+            profile.append(key_name + " " + value)
+    ciphers = directives.get("data-ciphers", [])
+    if ciphers:
+        if len(ciphers) != 1 or len(ciphers[0]) != 1 or not re.fullmatch(r"[A-Za-z0-9_:-]{1,256}", ciphers[0][0]):
+            fail("OpenVPN data-ciphers directive is ambiguous")
+        profile.append("data-ciphers " + ciphers[0][0])
+    return {"profile": "\\n".join(profile) + "\\n", "name": name}
+
 def openvpn_clients():
     """Discover a trusted Easy-RSA PKI and return certificate index metadata only."""
     candidates = []
@@ -1159,6 +1336,11 @@ def handle_xray_action(request):
 
 def handle_vpn_action(request):
     action = request.get("action")
+    if action == "openvpn_get_profile":
+        if set(request) != {"action", "name", "endpoint"}:
+            fail("Unexpected request fields")
+        print(json.dumps(openvpn_get_profile(request["name"], request["endpoint"])))
+        return True
     if action == "openvpn_create_client":
         if set(request) != {"action", "name"}:
             fail("Unexpected request fields")
