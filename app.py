@@ -133,7 +133,7 @@ def create_app(test_config=None):
     def security_headers(response):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Referrer-Policy"] = "same-origin"
+        response.headers.setdefault("Referrer-Policy", "same-origin")
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; "
             "img-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
@@ -402,7 +402,7 @@ def create_app(test_config=None):
         key_path = request.form.get("key_path", "")
         try:
             result = json.loads(run_helper(
-                "hysteria_single_port_preview", timeout=90, domain=domain, port=port,
+                "hysteria_single_port_preview", timeout=180, domain=domain, port=port,
                 cert_path=cert_path, key_path=key_path
             ) or "{}")
             if (result.get("valid") is not True
