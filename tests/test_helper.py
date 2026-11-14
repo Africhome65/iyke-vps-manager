@@ -862,6 +862,9 @@ def test_openvpn_revoke_client_regenerates_verified_crl(tmp_path, monkeypatch):
     index_state = {"value": initial}
     monkeypatch.setattr(helper, "_openvpn_unique_pki", lambda require_ca_key=False: (str(pki), initial))
     monkeypatch.setattr(helper, "_safe_root_directory", lambda path: True)
+    monkeypatch.setattr(helper.os, "fstat", lambda fd: type("Info", (), {
+        "st_mode": stat.S_IFREG | 0o600, "st_uid": 0, "st_nlink": 1
+    })())
     monkeypatch.setattr(helper, "_read_openvpn_index", lambda path: index_state["value"])
     monkeypatch.setattr(helper, "_openvpn_certificate_is_client", lambda path: True)
     monkeypatch.setattr(helper, "_openvpn_server_config_paths",
