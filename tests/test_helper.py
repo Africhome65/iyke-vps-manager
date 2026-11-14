@@ -130,6 +130,8 @@ def _prepare_xray_state_dir(monkeypatch, tmp_path):
 
 def test_xray_create_list_and_revoke_client_keeps_ids_private(tmp_path, monkeypatch):
     _prepare_xray_state_dir(monkeypatch, tmp_path)
+    monkeypatch.setattr(helper, "_xray_sync_add", lambda *args: None)
+    monkeypatch.setattr(helper, "_xray_sync_remove", lambda *args: None)
     monkeypatch.setattr(helper.os.path, "isfile", lambda path: path == "/usr/local/bin/xray")
     monkeypatch.setattr(helper.os, "access", lambda path, mode: path == "/usr/local/bin/xray")
     created = helper.xray_create_client("phone01", "vless")
@@ -147,6 +149,8 @@ def test_xray_create_list_and_revoke_client_keeps_ids_private(tmp_path, monkeypa
 
 def test_xray_create_client_rejects_duplicate_name(tmp_path, monkeypatch):
     _prepare_xray_state_dir(monkeypatch, tmp_path)
+    monkeypatch.setattr(helper, "_xray_sync_add", lambda *args: None)
+    monkeypatch.setattr(helper, "_xray_sync_remove", lambda *args: None)
     monkeypatch.setattr(helper.os.path, "isfile", lambda path: path == "/usr/local/bin/xray")
     monkeypatch.setattr(helper.os, "access", lambda path, mode: path == "/usr/local/bin/xray")
     helper.xray_create_client("phone01", "vmess")
@@ -156,6 +160,8 @@ def test_xray_create_client_rejects_duplicate_name(tmp_path, monkeypatch):
 
 def test_xray_create_client_rejects_invalid_protocol_or_name(tmp_path, monkeypatch):
     _prepare_xray_state_dir(monkeypatch, tmp_path)
+    monkeypatch.setattr(helper, "_xray_sync_add", lambda *args: None)
+    monkeypatch.setattr(helper, "_xray_sync_remove", lambda *args: None)
     monkeypatch.setattr(helper.os.path, "isfile", lambda path: path == "/usr/local/bin/xray")
     monkeypatch.setattr(helper.os, "access", lambda path, mode: path == "/usr/local/bin/xray")
     with pytest.raises(SystemExit):
@@ -463,3 +469,83 @@ def test_xray_install_uses_pinned_official_installer_in_transient_service(monkey
 def test_xray_action_rejects_unexpected_fields():
     with pytest.raises(SystemExit):
         helper.handle_xray_action({"action": "xray_install", "domain": "example.com"})
+
+
+
+def test_xray_sync_add_preserves_existing_clients_and_inbound_settings(monkeypatch):
+    original = {
+        "inbounds": [{
+            "protocol": "vmess", "tag": "vmess-ws", "listen": "127.0.0.1", "port": 10000,
+            "settings": {"clients": [{"id": "original-vmess-id", "alterId": 7}],
+                         "disableInsecureEncryption": True},
+            "streamSettings": {"network": "ws", "security": "none",
+                               "wsSettings": {"path": "/vmess", "headers": {"Host": "example"}}}
+        }],
+        "outbounds": [{"protocol": "freedom"}]
+    }
+    applied = []
+    monkeypatch.setattr(helper, "_xray_read_mutable_config",
+                        lambda: (json.loads(json.dumps(original)), b"original", 0o640))
+    monkeypatch.setattr(helper, "_xray_apply_config",
+                        lambda config, raw, mode: applied.append((config, raw, mode)))
+    helper._xray_sync_add("vmess", "11111111-1111-4111-8111-111111111111", "phone01")
+    changed, raw, mode = applied[0]
+    clients = changed["inbounds"][0]["settings"]["clients"]
+    assert clients[0] == {"id": "original-vmess-id", "alterId": 7}
+    assert clients[1] == {"id": "11111111-1111-4111-8111-111111111111",
+                          "alterId": 0, "email": "iyke:phone01"}
+    assert changed["inbounds"][0]["settings"]["disableInsecureEncryption"] is True
+    assert changed["inbounds"][0]["streamSettings"]["wsSettings"]["path"] == "/vmess"
+    assert changed["outbounds"] == original["outbounds"]
+    assert (raw, mode) == (b"original", 0o640)
+
+
+def test_xray_sync_remove_removes_only_selected_managed_client(monkeypatch):
+    original = {
+        "inbounds": [{
+            "protocol": "vless", "port": 10001,
+            "settings": {"clients": [
+                {"id": "original-vless-id", "email": "original"},
+                {"id": "managed-vless-id", "email": "iyke:phone01"}
+            ], "decryption": "none"},
+            "streamSettings": {"network": "ws", "security": "none",
+                               "wsSettings": {"path": "/vless"}}
+        }]
+    }
+    applied = []
+    monkeypatch.setattr(helper, "_xray_read_mutable_config",
+                        lambda: (json.loads(json.dumps(original)), b"original", 0o640))
+    monkeypatch.setattr(helper, "_xray_apply_config",
+                        lambda config, raw, mode: applied.append(config))
+    helper._xray_sync_remove("vless", "managed-vless-id")
+    clients = applied[0]["inbounds"][0]["settings"]["clients"]
+    assert clients == [{"id": "original-vless-id", "email": "original"}]
+    assert applied[0]["inbounds"][0]["settings"]["decryption"] == "none"
+
+
+def test_xray_client_sync_refuses_ambiguous_or_missing_inbound(monkeypatch):
+    with pytest.raises(SystemExit):
+        helper._xray_client_inbound({"inbounds": []}, "vless")
+    ambiguous = {"inbounds": [
+        {"protocol": "vless", "port": 1, "settings": {"clients": []},
+         "streamSettings": {"network": "ws", "wsSettings": {"path": "/one"}}},
+        {"protocol": "vless", "port": 2, "settings": {"clients": []},
+         "streamSettings": {"network": "ws", "wsSettings": {"path": "/two"}}}
+    ]}
+    with pytest.raises(SystemExit):
+        helper._xray_client_inbound(ambiguous, "vless")
+
+
+def test_xray_sync_remove_refuses_unknown_client_id(monkeypatch):
+    config = {"inbounds": [{
+        "protocol": "vless", "port": 10001, "settings": {"clients": [
+            {"id": "existing-id"}
+        ]},
+        "streamSettings": {"network": "ws", "wsSettings": {"path": "/vless"}}
+    }]}
+    monkeypatch.setattr(helper, "_xray_read_mutable_config",
+                        lambda: (config, b"original", 0o600))
+    monkeypatch.setattr(helper, "_xray_apply_config",
+                        lambda *args: pytest.fail("must not apply a config without exact client match"))
+    with pytest.raises(SystemExit):
+        helper._xray_sync_remove("vless", "not-managed-id")
