@@ -130,8 +130,13 @@ def _prepare_xray_state_dir(monkeypatch, tmp_path):
 
 def test_xray_create_client_fails_closed_without_live_sync(tmp_path, monkeypatch):
     state = _prepare_xray_state_dir(monkeypatch, tmp_path)
-    monkeypatch.setattr(helper.os.path, "isfile", lambda path: path == "/usr/local/bin/xray")
-    monkeypatch.setattr(helper.os, "access", lambda path, mode: path == "/usr/local/bin/xray")
+
+    # Simulate an unavailable or unsafe live configuration explicitly.  Do not
+    # inspect the host running pytest: it may have a real Xray installation.
+    monkeypatch.setattr(
+        helper, "_read_xray_config_document",
+        lambda: helper.fail("Existing Xray configuration is unavailable")
+    )
     with pytest.raises(SystemExit):
         helper.xray_create_client("phone01", "vless")
     assert not (state / "xray-clients.json").exists()
@@ -251,6 +256,8 @@ def test_vpn_status_reports_xray_binary_and_service(monkeypatch):
          "network": "ws", "security": "none", "path": "/vless"}
     ]}
     monkeypatch.setattr(helper, "_xray_config_summary", lambda: summary)
+    # Keep this unit test independent of a real /etc/caddy/Caddyfile.
+    monkeypatch.setattr(helper, "_caddy_public_hostname", lambda: "")
     status = helper.vpn_status()
     assert status["xray"] == {"installed": True, "service": "active",
                               "public_hostname": "", **summary}
