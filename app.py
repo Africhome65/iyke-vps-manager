@@ -367,7 +367,7 @@ def create_app(test_config=None):
             flash(str(exc), "error")
         return redirect(url_for("vpn_services"))
 
-    def xray_profile_uri(name):
+    def xray_profile_uris(name):
         if not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name) or name in {"root", "server", "ca"}:
             abort(404)
         try:
@@ -378,16 +378,27 @@ def create_app(test_config=None):
                     or not isinstance(data.get("path"), str) or data.get("port") != 443):
                 raise RuntimeError("Xray profile data could not be verified")
             builder = build_vmess_uri if data["protocol"] == "vmess" else build_vless_uri
-            return builder(data["id"], data["hostname"], data["path"], name, port=data["port"]), data["protocol"]
+            return [
+                (443, builder(data["id"], data["hostname"], data["path"], name, port=443)),
+                (80, builder(data["id"], data["hostname"], data["path"], name, port=80)),
+            ], data["protocol"]
         except (RuntimeError, json.JSONDecodeError, KeyError, TypeError, ValueError):
             abort(404, description="Xray client profile is unavailable")
+
+    def xray_profile_uri(name):
+        profiles, protocol = xray_profile_uris(name)
+        return profiles[0][1], protocol
 
     @app.get("/vpn/xray/clients/<name>/profile")
     @login_required
     def download_xray_profile(name):
-        profile, protocol = xray_profile_uri(name)
-        response = Response(profile + "\n", mimetype="text/plain; charset=utf-8")
-        response.headers["Content-Disposition"] = f'attachment; filename="{name}-{protocol}.txt"'
+        profiles, protocol = xray_profile_uris(name)
+        content = "\n".join(
+            f"# {protocol.upper()} WebSocket port {port} ({'TLS' if port == 443 else 'plain HTTP'})\n{uri}"
+            for port, uri in profiles
+        ) + "\n"
+        response = Response(content, mimetype="text/plain; charset=utf-8")
+        response.headers["Content-Disposition"] = f'attachment; filename="{name}-{protocol}-80-443.txt"'
         response.headers["Cache-Control"] = "no-store, private, max-age=0"
         response.headers["Pragma"] = "no-cache"
         return response

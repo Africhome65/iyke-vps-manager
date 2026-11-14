@@ -116,7 +116,7 @@
         <div class="vpn-list">{% for client in xray_clients %}
           <div class="vpn-instance">
             <div><b>{{ client.name }}</b><small class="muted">{{ client.protocol|upper }} · Live Xray client</small></div>
-            <div class="inline"><a href="{{ url_for('download_xray_profile', name=client.name) }}">Download</a><a href="{{ url_for('xray_profile_qr', name=client.name) }}" target="_blank" rel="noopener">QR code</a>
+            <div class="inline"><a href="{{ url_for('download_xray_profile', name=client.name) }}">Download 80 + 443</a><a href="{{ url_for('xray_profile_qr', name=client.name) }}" target="_blank" rel="noopener">QR code</a>
               <form method="post" action="{{ url_for('revoke_xray_client', name=client.name) }}" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="secondary" type="submit">Revoke</button></form>
             </div>
           </div>
