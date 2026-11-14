@@ -817,9 +817,9 @@ def test_openvpn_get_profile_builds_inline_profile_only_for_verified_server(monk
     })
     def read_pem(path, label, max_bytes=1024 * 1024):
         return {
-            "CA certificate": "-----BEGIN CERTIFICATE-----\\nCA\\n-----END CERTIFICATE-----\\n",
-            "client certificate": "-----BEGIN CERTIFICATE-----\\nCERT\\n-----END CERTIFICATE-----\\n",
-            "client private key": "-----BEGIN PRIVATE KEY-----\\nKEY\\n-----END PRIVATE KEY-----\\n",
+            "CA certificate": "-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----\n",
+            "client certificate": "-----BEGIN CERTIFICATE-----\nCERT\n-----END CERTIFICATE-----\n",
+            "client private key": "-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----\n",
         }[label]
     monkeypatch.setattr(helper, "_openvpn_read_pem", read_pem)
     result = helper.openvpn_get_profile("phone01", "vpn.example.com")
