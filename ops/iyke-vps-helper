@@ -2191,7 +2191,7 @@ def _hysteria_udp_listener_present(port):
             local_port = int(fields[3].rsplit(":", 1)[1])
         except (ValueError, IndexError):
             fail("UDP listener output could not be safely interpreted")
-        if local_port == port and re.search(r'users:\\(\\("hysteria",pid=\\d+', line):
+        if local_port == port and re.search(r'users:\(\("hysteria",pid=\d+', line):
             return True
     return False
 
