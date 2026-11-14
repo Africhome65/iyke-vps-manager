@@ -119,6 +119,55 @@ def test_vpn_status_reports_missing_software(monkeypatch):
     }
 
 
+
+def test_openvpn_crl_state_reports_missing_directive(tmp_path, monkeypatch):
+    config = tmp_path / "server.conf"
+    config.write_text("port 1194\\nproto udp\\n", encoding="utf-8")
+    monkeypatch.setattr(helper.os, "lstat", lambda path: type("Info", (), {
+        "st_mode": stat.S_IFREG | 0o644, "st_uid": 0, "st_nlink": 1
+    })())
+    assert helper._openvpn_crl_state(str(config)) == {
+        "crl_configured": False, "crl_ready": False
+    }
+
+
+def test_openvpn_crl_state_checks_relative_crl_file(tmp_path, monkeypatch):
+    config = tmp_path / "server.conf"
+    crl = tmp_path / "crl.pem"
+    config.write_text("port 1194\\ncrl-verify crl.pem\\n", encoding="utf-8")
+    crl.write_text("public CRL data\\n", encoding="utf-8")
+    real_lstat = helper.os.lstat
+
+    def fake_lstat(path):
+        info = real_lstat(path)
+        return type("Info", (), {
+            "st_mode": info.st_mode, "st_uid": 0, "st_nlink": info.st_nlink
+        })()
+
+    monkeypatch.setattr(helper.os, "lstat", fake_lstat)
+    assert helper._openvpn_crl_state(str(config)) == {
+        "crl_configured": True, "crl_ready": True
+    }
+
+
+def test_openvpn_crl_state_reports_missing_crl_file(tmp_path, monkeypatch):
+    config = tmp_path / "server.conf"
+    config.write_text("crl-verify missing-crl.pem\\n", encoding="utf-8")
+    real_lstat = helper.os.lstat
+
+    def fake_lstat(path):
+        info = real_lstat(path)
+        return type("Info", (), {
+            "st_mode": info.st_mode, "st_uid": 0, "st_nlink": info.st_nlink
+        })()
+
+    monkeypatch.setattr(helper.os, "lstat", fake_lstat)
+    assert helper._openvpn_crl_state(str(config)) == {
+        "crl_configured": True, "crl_ready": False
+    }
+
+
+
 def test_vpn_status_reports_xray_binary_and_service(monkeypatch):
     monkeypatch.setattr(helper.shutil, "which",
                         lambda command: "/usr/local/bin/xray" if command == "xray" else None)
