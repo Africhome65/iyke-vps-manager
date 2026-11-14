@@ -1862,11 +1862,11 @@ def test_hysteria_firewall_opens_only_configured_udp_port_with_active_ufw(tmp_pa
         nonlocal status_calls
         calls.append(command)
         if command[:2] == ["/usr/bin/systemctl", "is-active"]:
-            return helper.subprocess.CompletedProcess(command, 0, "active\\n", "")
+            return helper.subprocess.CompletedProcess(command, 0, "active\n", "")
         if command == ["/usr/sbin/ufw", "status"]:
             status_calls += 1
-            output = ("Status: active\\n\\nTo                         Action      From\\n"
-                      "8443/udp                   ALLOW IN    Anywhere\\n") if status_calls > 1 else "Status: active\\n"
+            output = ("Status: active\n\nTo                         Action      From\n"
+                      "8443/udp                   ALLOW IN    Anywhere\n") if status_calls > 1 else "Status: active\n"
             return helper.subprocess.CompletedProcess(command, 0, output, "")
         if command[:2] == ["/usr/sbin/ufw", "allow"]:
             return helper.subprocess.CompletedProcess(command, 0, "Rule added", "")
@@ -1902,8 +1902,8 @@ def test_hysteria_firewall_refuses_inactive_ufw_without_changing_rules(tmp_path,
     def fake_run(command, **kwargs):
         calls.append(command)
         if command[:2] == ["/usr/bin/systemctl", "is-active"]:
-            return helper.subprocess.CompletedProcess(command, 0, "active\\n", "")
-        return helper.subprocess.CompletedProcess(command, 0, "Status: inactive\\n", "")
+            return helper.subprocess.CompletedProcess(command, 0, "active\n", "")
+        return helper.subprocess.CompletedProcess(command, 0, "Status: inactive\n", "")
 
     monkeypatch.setattr(helper.subprocess, "run", fake_run)
     with pytest.raises(SystemExit):
