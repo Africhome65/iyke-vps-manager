@@ -244,3 +244,30 @@ def test_openvpn_client_issuance_route_rejects_invalid_name_before_helper(client
     assert any("client name with lowercase" in message for _, message in flashes)
 
 
+
+
+
+def test_openvpn_profile_download_requires_login_and_is_not_cached(client, monkeypatch):
+    assert client.get("/vpn/openvpn/clients/phone01/profile?endpoint=vpn.example.com").status_code == 302
+    login(client)
+    calls = []
+    profile = "client\\ndev tun\\nremote vpn.example.com 1194\\n<key>secret</key>\\n"
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args, 0, stdout=__import__("json").dumps({"name":"phone01","profile":profile}), stderr="")
+    monkeypatch.setattr("app.subprocess.run", fake_run)
+    response = client.get("/vpn/openvpn/clients/phone01/profile?endpoint=vpn.example.com")
+    assert response.status_code == 200
+    assert response.data.decode() == profile
+    assert response.headers["Cache-Control"] == "no-store, private, max-age=0"
+    assert response.headers["Pragma"] == "no-cache"
+    assert response.headers["Content-Disposition"] == 'attachment; filename="phone01.ovpn"'
+    assert __import__("json").loads(calls[0][1]["input"]) == {
+        "action":"openvpn_get_profile","name":"phone01","endpoint":"vpn.example.com"
+    }
+
+
+def test_openvpn_profile_download_rejects_invalid_name(client, monkeypatch):
+    login(client)
+    monkeypatch.setattr("app.subprocess.run", lambda *a, **k: pytest.fail("helper should not run"))
+    assert client.get("/vpn/openvpn/clients/../profile?endpoint=vpn.example.com").status_code in {400, 404}
