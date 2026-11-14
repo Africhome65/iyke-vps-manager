@@ -457,7 +457,7 @@ def test_hysteria_configure_route_requires_login_and_shows_one_time_credentials(
         "domain": "vpn.example.com", "port": "8443",
         "cert_path": "/etc/ssl/fullchain.pem", "key_path": "/etc/ssl/privkey.pem"
     }
-    assert calls[0][1]["timeout"] == 90
+    assert calls[0][1]["timeout"] == 180
 
 
 def test_hysteria_install_route_requires_login_and_calls_helper(client, monkeypatch):
