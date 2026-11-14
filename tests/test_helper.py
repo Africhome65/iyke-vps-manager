@@ -1177,6 +1177,7 @@ def test_openvpn_create_client_revokes_certificate_after_post_issue_validation_f
 
 def test_openvpn_failed_issuance_repairs_crl_for_already_revoked_index(tmp_path, monkeypatch):
     pki = tmp_path / "pki"
+    _pretend_root_owned(monkeypatch)
     for name in ("issued", "private"):
         (pki / name).mkdir(parents=True, mode=0o700)
         (pki / name).chmod(0o700)
