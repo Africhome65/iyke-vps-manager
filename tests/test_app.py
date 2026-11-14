@@ -279,8 +279,12 @@ def test_xray_profile_download_requires_login_and_is_not_cached(client, monkeypa
     response = client.get("/vpn/xray/clients/phone01/profile")
     assert response.status_code == 200
     assert response.headers["Cache-Control"] == "no-store, private, max-age=0"
-    assert response.headers["Content-Disposition"] == 'attachment; filename="phone01-vless.txt"'
-    assert response.get_data(as_text=True).startswith("vless://12345678-1234-4234-8234-123456789abc@")
+    assert response.headers["Content-Disposition"] == 'attachment; filename="phone01-vless-80-443.txt"'
+    body = response.get_data(as_text=True)
+    assert "# VLESS WebSocket port 443 (TLS)" in body
+    assert "# VLESS WebSocket port 80 (plain HTTP)" in body
+    assert "vless://12345678-1234-4234-8234-123456789abc@vpn.example.net:443?" in body
+    assert "vless://12345678-1234-4234-8234-123456789abc@vpn.example.net:80?" in body
 
 
 def test_xray_profile_qr_requires_login(client, monkeypatch):
