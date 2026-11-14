@@ -714,6 +714,7 @@ def test_openvpn_create_client_uses_trusted_easyrsa_and_never_returns_key(tmp_pa
     _pretend_root_owned(monkeypatch)
     monkeypatch.setattr(helper, "_openvpn_unique_pki", lambda require_ca_key=False: (str(pki), ""))
     monkeypatch.setattr(helper, "_openvpn_easyrsa_path", lambda: str(script))
+    monkeypatch.setattr(helper, "_openvpn_certificate_is_client", lambda path: True)
     updated = "V\t301231235959Z\t\t01\tunknown\t/CN=phone01\n"
     monkeypatch.setattr(helper, "_read_openvpn_index", lambda path: updated)
     calls = []
