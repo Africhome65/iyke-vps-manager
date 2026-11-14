@@ -1460,6 +1460,8 @@ def test_openvpn_revoke_client_regenerates_verified_crl(tmp_path, monkeypatch):
     monkeypatch.setattr(helper, "_openvpn_config_directives", lambda path: {
         "ca": [[str(ca_file)]], "cert": [["server.crt"]]
     })
+    monkeypatch.setattr(helper, "_openvpn_config_uses_pki_ca",
+                        lambda config_path, directives, selected_pki: True)
     monkeypatch.setattr(helper, "_openvpn_read_pem", lambda path, label: "-----BEGIN X509 CRL-----\nCRL\n-----END X509 CRL-----\n")
     monkeypatch.setattr(helper, "_openvpn_easyrsa_path", lambda: "/usr/bin/easyrsa")
     calls = []
