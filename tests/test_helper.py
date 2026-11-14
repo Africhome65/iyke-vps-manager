@@ -215,6 +215,10 @@ def test_caddy_public_hostname_reads_one_site_without_exposing_config(monkeypatc
     })() if path in {"/etc", "/etc/caddy"} else real_lstat(path))
     monkeypatch.setattr(helper.os, "open", lambda path, flags: real_open(config, flags)
                         if path == "/etc/caddy/Caddyfile" else real_open(path, flags))
+    monkeypatch.setattr(helper.os, "fstat", lambda fd: type("Info", (), {
+        "st_mode": helper.stat.S_IFREG | 0o640, "st_uid": 0,
+        "st_nlink": 1, "st_size": config.stat().st_size
+    })())
     assert helper._caddy_public_hostname() == "smarty.example.net"
     monkeypatch.setattr(helper.os, "open", real_open)
     monkeypatch.setattr(helper.os, "lstat", real_lstat)
@@ -231,6 +235,10 @@ def test_caddy_public_hostname_fails_closed_when_multiple_sites(monkeypatch, tmp
     })() if path in {"/etc", "/etc/caddy"} else real_lstat(path))
     monkeypatch.setattr(helper.os, "open", lambda path, flags: real_open(config, flags)
                         if path == "/etc/caddy/Caddyfile" else real_open(path, flags))
+    monkeypatch.setattr(helper.os, "fstat", lambda fd: type("Info", (), {
+        "st_mode": helper.stat.S_IFREG | 0o640, "st_uid": 0,
+        "st_nlink": 1, "st_size": config.stat().st_size
+    })())
     assert helper._caddy_public_hostname() == ""
 
 
