@@ -173,6 +173,53 @@ def test_xray_client_registry_rejects_symlink(tmp_path, monkeypatch):
         helper.xray_list_clients()
 
 
+def test_xray_config_summary_reports_only_safe_inbound_metadata(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({
+        "inbounds": [
+            {"listen": "127.0.0.1", "port": 10000, "protocol": "vmess",
+             "settings": {"clients": [{"id": "secret-uuid"}]},
+             "streamSettings": {"network": "ws", "wsSettings": {"path": "/vmess"}}},
+            {"listen": "127.0.0.1", "port": 10001, "protocol": "vless",
+             "settings": {"clients": [{"id": "another-secret"}]},
+             "streamSettings": {"network": "ws", "wsSettings": {"path": "/vless"}}}
+        ]
+    }), encoding="utf-8")
+    real_open = helper.os.open
+    real_fstat = helper.os.fstat
+    monkeypatch.setattr(helper.os, "lstat", lambda path: type("Info", (), {
+        "st_mode": helper.stat.S_IFDIR | 0o755, "st_uid": 0
+    })())
+    monkeypatch.setattr(helper.os, "open", lambda path, flags: real_open(
+        str(config_path) if path == "/usr/local/etc/xray/config.json" else path, flags))
+    monkeypatch.setattr(helper.os, "fstat", lambda fd: type("Info", (), {
+        "st_mode": helper.stat.S_IFREG | 0o640, "st_uid": 0,
+        "st_nlink": 1, "st_size": config_path.stat().st_size
+    })())
+    summary = helper._xray_config_summary()
+    assert summary == {
+        "config_status": "readable",
+        "inbounds": [
+            {"protocol": "vmess", "listen": "127.0.0.1", "port": 10000,
+             "network": "ws", "security": "none", "path": "/vmess"},
+            {"protocol": "vless", "listen": "127.0.0.1", "port": 10001,
+             "network": "ws", "security": "none", "path": "/vless"}
+        ]
+    }
+    assert "secret-uuid" not in json.dumps(summary)
+    monkeypatch.setattr(helper.os, "open", real_open)
+    monkeypatch.setattr(helper.os, "fstat", real_fstat)
+
+
+def test_xray_config_summary_fails_closed_on_unsafe_parent(monkeypatch):
+    def fake_lstat(path):
+        if path == "/usr/local/etc/xray":
+            return type("Info", (), {"st_mode": helper.stat.S_IFLNK | 0o777, "st_uid": 0})()
+        return type("Info", (), {"st_mode": helper.stat.S_IFDIR | 0o755, "st_uid": 0})()
+    monkeypatch.setattr(helper.os, "lstat", fake_lstat)
+    assert helper._xray_config_summary() == {"config_status": "unsafe", "inbounds": []}
+
+
 def test_vpn_status_reports_xray_binary_and_service(monkeypatch):
     monkeypatch.setattr(helper.shutil, "which",
                         lambda command: "/usr/local/bin/xray" if command == "xray" else None)
