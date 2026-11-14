@@ -1950,6 +1950,7 @@ def _prepare_hysteria_start_files(tmp_path, monkeypatch):
 
 def test_hysteria_start_verifies_active_and_enabled_dedicated_unit(tmp_path, monkeypatch):
     _prepare_hysteria_start_files(tmp_path, monkeypatch)
+    monkeypatch.setattr(helper, "_hysteria_udp_listener_present", lambda port: port == 8443)
     calls = []
 
     def fake_run(command, **kwargs):
@@ -2088,3 +2089,15 @@ def test_hysteria_start_refuses_low_udp_port_without_bind_capability(tmp_path, m
     with pytest.raises(SystemExit):
         helper.hysteria_start_service()
     assert "low-port bind capability" in capsys.readouterr().err
+
+
+def test_hysteria_udp_listener_check_requires_exact_port(monkeypatch):
+    monkeypatch.setattr(helper.shutil, "which", lambda name: "/usr/bin/ss")
+    monkeypatch.setattr(
+        helper.subprocess, "run",
+        lambda command, **kwargs: helper.subprocess.CompletedProcess(
+            command, 0, "UNCONN 0 0 *:8443 *:*\n", ""
+        ),
+    )
+    assert helper._hysteria_udp_listener_present(8443) is True
+    assert helper._hysteria_udp_listener_present(443) is False
