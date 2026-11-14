@@ -548,7 +548,8 @@ def _openvpn_create_client_unlocked(name, locked_pki):
     }
     try:
         result = subprocess.run(
-            [easyrsa, "--batch", "build-client-full", name, "nopass"],
+            ["/bin/sh", "-c", 'umask 077; exec "$@"', "iyke-openvpn-easyrsa",
+             easyrsa, "--batch", "build-client-full", name, "nopass"],
             cwd=os.path.dirname(easyrsa), env=env, text=True,
             capture_output=True, check=False, timeout=90,
         )
