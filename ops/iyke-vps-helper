@@ -468,7 +468,7 @@ def _openvpn_read_pem(path, label, max_bytes=1024 * 1024):
     finally:
         if fd >= 0:
             os.close(fd)
-    if len(value) > max_bytes or not value.endswith("\\n"):
+    if len(value) > max_bytes or not value.endswith("\n"):
         fail("Required OpenVPN " + label + " file is invalid")
     return value
 
@@ -496,7 +496,7 @@ def openvpn_get_profile(name, endpoint):
         endpoint = str(address)
     except ValueError:
         if not re.fullmatch(
-            r"(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*",
+            r"(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*",
             endpoint
         ):
             fail("Enter a valid public DNS name or IP address")
@@ -592,7 +592,7 @@ def openvpn_get_profile(name, endpoint):
         if len(ciphers) != 1 or len(ciphers[0]) != 1 or not re.fullmatch(r"[A-Za-z0-9_:-]{1,256}", ciphers[0][0]):
             fail("OpenVPN data-ciphers directive is ambiguous")
         profile.append("data-ciphers " + ciphers[0][0])
-    return {"profile": "\\n".join(profile) + "\\n", "name": name}
+    return {"profile": "\n".join(profile) + "\n", "name": name}
 
 def openvpn_clients():
     """Discover a trusted Easy-RSA PKI and return certificate index metadata only."""
