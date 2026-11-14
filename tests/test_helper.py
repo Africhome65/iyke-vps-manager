@@ -204,6 +204,36 @@ def test_xray_config_summary_fails_closed_on_unsafe_parent(monkeypatch):
     assert helper._xray_config_summary() == {"config_status": "unsafe", "inbounds": []}
 
 
+def test_caddy_public_hostname_reads_one_site_without_exposing_config(monkeypatch, tmp_path):
+    config = tmp_path / "Caddyfile"
+    config.write_text("smarty.example.net {\\n  reverse_proxy 127.0.0.1:10000\\n}\\n", encoding="utf-8")
+    real_open = helper.os.open
+    real_lstat = helper.os.lstat
+    real_fstat = helper.os.fstat
+    monkeypatch.setattr(helper.os, "lstat", lambda path: type("Info", (), {
+        "st_mode": helper.stat.S_IFDIR | 0o755, "st_uid": 0
+    })() if path in {"/etc", "/etc/caddy"} else real_lstat(path))
+    monkeypatch.setattr(helper.os, "open", lambda path, flags: real_open(config, flags)
+                        if path == "/etc/caddy/Caddyfile" else real_open(path, flags))
+    assert helper._caddy_public_hostname() == "smarty.example.net"
+    monkeypatch.setattr(helper.os, "open", real_open)
+    monkeypatch.setattr(helper.os, "lstat", real_lstat)
+    monkeypatch.setattr(helper.os, "fstat", real_fstat)
+
+
+def test_caddy_public_hostname_fails_closed_when_multiple_sites(monkeypatch, tmp_path):
+    config = tmp_path / "Caddyfile"
+    config.write_text("one.example.net {\\n}\n two.example.net {\\n}\n", encoding="utf-8")
+    real_open = helper.os.open
+    real_lstat = helper.os.lstat
+    monkeypatch.setattr(helper.os, "lstat", lambda path: type("Info", (), {
+        "st_mode": helper.stat.S_IFDIR | 0o755, "st_uid": 0
+    })() if path in {"/etc", "/etc/caddy"} else real_lstat(path))
+    monkeypatch.setattr(helper.os, "open", lambda path, flags: real_open(config, flags)
+                        if path == "/etc/caddy/Caddyfile" else real_open(path, flags))
+    assert helper._caddy_public_hostname() == ""
+
+
 def test_vpn_status_reports_xray_binary_and_service(monkeypatch):
     monkeypatch.setattr(helper.shutil, "which",
                         lambda command: "/usr/local/bin/xray" if command == "xray" else None)
@@ -214,7 +244,8 @@ def test_vpn_status_reports_xray_binary_and_service(monkeypatch):
     ]}
     monkeypatch.setattr(helper, "_xray_config_summary", lambda: summary)
     status = helper.vpn_status()
-    assert status["xray"] == {"installed": True, "service": "active", **summary}
+    assert status["xray"] == {"installed": True, "service": "active",
+                              "public_hostname": "", **summary}
 
 
 def test_vpn_status_reports_wireguard_interfaces(monkeypatch):
