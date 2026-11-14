@@ -424,6 +424,57 @@ def _openvpn_crl_state(config_path):
     return {"crl_configured": True, "crl_file_present": valid}
 
 
+def _openvpn_runtime_config_matches(unit, expected_config):
+    """Require the active MainPID to be OpenVPN itself and pass exactly this config."""
+    if not re.fullmatch(r"openvpn(?:-server)?@[A-Za-z0-9_.-]{1,64}\\.service", unit):
+        return False
+    if _unit_state(unit) != "active":
+        return False
+    try:
+        first = subprocess.run(
+            ["systemctl", "show", unit, "--property=MainPID", "--value"],
+            text=True, capture_output=True, check=False, timeout=5,
+        )
+        if first.returncode != 0 or not re.fullmatch(r"[1-9][0-9]{0,8}", first.stdout.strip()):
+            return False
+        pid = first.stdout.strip()
+        with open(f"/proc/{pid}/cmdline", "rb") as source:
+            raw = source.read(65537)
+        if not raw or len(raw) > 65536 or not raw.endswith(b"\\0"):
+            return False
+        argv = [part.decode("utf-8", "strict") for part in raw.rstrip(b"\\0").split(b"\\0")]
+        if not argv:
+            return False
+        process_exe = os.readlink(f"/proc/{pid}/exe")
+        expected_exe = shutil.which("openvpn")
+        if not expected_exe or os.path.realpath(process_exe) != os.path.realpath(expected_exe):
+            return False
+        configs = []
+        index = 1
+        while index < len(argv):
+            arg = argv[index]
+            if arg == "--config":
+                if index + 1 >= len(argv):
+                    return False
+                configs.append(argv[index + 1])
+                index += 2
+                continue
+            if arg.startswith("--config="):
+                configs.append(arg.split("=", 1)[1])
+            index += 1
+        if len(configs) != 1 or not configs[0] or not os.path.isabs(configs[0]):
+            return False
+        if os.path.normpath(configs[0]) != os.path.normpath(expected_config):
+            return False
+        second = subprocess.run(
+            ["systemctl", "show", unit, "--property=MainPID", "--value"],
+            text=True, capture_output=True, check=False, timeout=5,
+        )
+        return second.returncode == 0 and second.stdout.strip() == pid
+    except (OSError, UnicodeError, subprocess.SubprocessError):
+        return False
+
+
 def vpn_status():
     """Return service metadata only; never expose private keys or config contents."""
     wireguard_installed = shutil.which("wg") is not None
@@ -461,10 +512,16 @@ def vpn_status():
                 if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", instance):
                     continue
                 config_path = os.path.join(directory, entry.name)
+                unit = f"{unit_prefix}{instance}.service"
                 crl_state = _openvpn_crl_state(config_path)
+                runtime_verified = _openvpn_runtime_config_matches(unit, config_path)
                 openvpn["instances"].append({
                     "name": instance,
-                    "status": _unit_state(f"{unit_prefix}{instance}.service"),
+                    "status": _unit_state(unit),
+                    "crl_runtime_verified": bool(
+                        runtime_verified and crl_state["crl_configured"]
+                        and crl_state["crl_file_present"]
+                    ),
                     **crl_state,
                 })
     xray_binary = shutil.which("xray")
