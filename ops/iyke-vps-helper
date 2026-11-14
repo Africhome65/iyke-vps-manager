@@ -220,6 +220,39 @@ def _unit_state(unit):
                               "deactivating", "reloading"} else "unknown"
 
 
+
+def _openvpn_crl_state(config_path):
+    """Report CRL enforcement readiness without exposing configuration contents."""
+    try:
+        config_info = os.lstat(config_path)
+        if not stat.S_ISREG(config_info.st_mode) or config_info.st_uid != 0:
+            return {"crl_configured": False, "crl_ready": False}
+        with open(config_path, encoding="utf-8") as source:
+            lines = source.readlines()
+    except (OSError, UnicodeDecodeError):
+        return {"crl_configured": False, "crl_ready": False}
+
+    crl_path = None
+    for line in lines:
+        directive = line.split("#", 1)[0].strip()
+        match = re.match(r"^crl-verify\\s+(\\S+)(?:\\s+.*)?$", directive)
+        if match:
+            crl_path = match.group(1).strip('"\\'')
+            break
+    if not crl_path:
+        return {"crl_configured": False, "crl_ready": False}
+
+    if not os.path.isabs(crl_path):
+        crl_path = os.path.join(os.path.dirname(config_path), crl_path)
+    try:
+        crl_info = os.lstat(crl_path)
+        ready = (stat.S_ISREG(crl_info.st_mode) and crl_info.st_uid == 0
+                 and crl_info.st_nlink == 1)
+    except OSError:
+        ready = False
+    return {"crl_configured": True, "crl_ready": ready}
+
+
 def vpn_status():
     """Return service metadata only; never expose private keys or config contents."""
     wireguard_installed = shutil.which("wg") is not None
@@ -256,9 +289,12 @@ def vpn_status():
                 instance = entry.name[:-5]
                 if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", instance):
                     continue
+                config_path = os.path.join(directory, entry.name)
+                crl_state = _openvpn_crl_state(config_path)
                 openvpn["instances"].append({
                     "name": instance,
-                    "status": _unit_state(f"{unit_prefix}{instance}.service")
+                    "status": _unit_state(f"{unit_prefix}{instance}.service"),
+                    **crl_state,
                 })
     xray_binary = shutil.which("xray")
     xray = {
