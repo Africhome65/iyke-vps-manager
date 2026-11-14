@@ -222,6 +222,7 @@ def test_xray_client_create_route_calls_helper_and_does_not_flash_id(client, mon
     assert all("12345678-1234-4234-8234-123456789abc" not in message for message in messages)
     request = __import__("json").loads(calls[0][1]["input"])
     assert request == {"action":"xray_create_client","name":"phone01","protocol":"vmess"}
+    assert calls[0][1]["timeout"] == 150
 
 
 def test_xray_client_revoke_route_calls_helper(client, monkeypatch):
@@ -235,6 +236,7 @@ def test_xray_client_revoke_route_calls_helper(client, monkeypatch):
     assert response.status_code == 302
     request = __import__("json").loads(calls[0][1]["input"])
     assert request == {"action":"xray_revoke_client","name":"phone01"}
+    assert calls[0][1]["timeout"] == 150
 
 
 def test_xray_install_route_requires_login_and_calls_helper(client, monkeypatch):
