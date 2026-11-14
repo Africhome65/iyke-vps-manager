@@ -933,6 +933,46 @@ def test_hysteria_validate_rejects_invalid_inputs(domain, ports):
         helper.hysteria_validate(domain, ports)
 
 
+def test_hysteria_readiness_reports_dns_and_udp_conflicts_read_only(monkeypatch):
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        if command[0] == "/usr/bin/getent":
+            return helper.subprocess.CompletedProcess(
+                command, 0, "203.0.113.10 STREAM example.test\\n", ""
+            )
+        return helper.subprocess.CompletedProcess(
+            command, 0,
+            "UNCONN 0 0 127.0.0.53:53 0.0.0.0:*\\n", ""
+        )
+
+    monkeypatch.setattr(helper.shutil, "which",
+                        lambda name: f"/usr/bin/{name}" if name in {"getent", "ss"} else None)
+    monkeypatch.setattr(helper.subprocess, "run", fake_run)
+    result = helper.hysteria_readiness("example.test", "53,8443")
+    assert result["dns_checked"] is True
+    assert result["dns_resolves"] is True
+    assert result["dns_addresses"] == ["203.0.113.10"]
+    assert result["ports_checked"] is True
+    assert result["occupied_ports"] == [53]
+    assert result["available_ports"] == [8443]
+    assert result["service_changed"] is False
+    assert result["firewall_changed"] is False
+    assert len(calls) == 2
+
+
+def test_hysteria_readiness_fails_closed_when_socket_inspection_unavailable(monkeypatch):
+    monkeypatch.setattr(helper.shutil, "which",
+                        lambda name: "/usr/bin/getent" if name == "getent" else None)
+    monkeypatch.setattr(helper.subprocess, "run", lambda *a, **k:
+                        helper.subprocess.CompletedProcess(a[0], 0, "", ""))
+    result = helper.hysteria_readiness("example.test", "8443")
+    assert result["port_check_status"] == "unavailable"
+    assert result["available_ports"] == []
+    assert result["occupied_ports"] == []
+
+
 def test_hysteria_action_validates_exact_request_shape(capsys):
     assert helper.handle_hysteria_action({
         "action": "hysteria_validate", "domain": "vpn.example.com", "ports": "53,8443"
