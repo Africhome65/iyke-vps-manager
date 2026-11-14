@@ -358,13 +358,15 @@ def _openvpn_easyrsa_path():
     return path
 
 
-def _openvpn_create_client_unlocked(name):
+def _openvpn_create_client_unlocked(name, locked_pki):
     """Issue a passwordless client keypair and certificate without returning its private key."""
     if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name):
         fail("Invalid OpenVPN client name")
     if name in {"root", "server", "ca"}:
         fail("That OpenVPN client name is reserved")
     pki, index_text = _openvpn_unique_pki(require_ca_key=True)
+    if os.path.realpath(pki) != os.path.realpath(locked_pki):
+        fail("The trusted Easy-RSA database changed while acquiring its lock")
     if any(row["common_name"] == name for row in _openvpn_index_clients(index_text)):
         fail("An OpenVPN certificate with that client name already exists")
     key_path = os.path.join(pki, "private", name + ".key")
@@ -445,7 +447,7 @@ def openvpn_create_client(name):
         fail("That OpenVPN client name is reserved")
     pki, _index = _openvpn_unique_pki(require_ca_key=True)
     with _openvpn_pki_lock(pki):
-        return _openvpn_create_client_unlocked(name)
+        return _openvpn_create_client_unlocked(name, pki)
 
 
 def _openvpn_atomic_pki_file(path, content):
