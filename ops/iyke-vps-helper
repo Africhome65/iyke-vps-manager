@@ -1981,6 +1981,41 @@ def hysteria_install():
     }
 
 
+def hysteria_validate(domain, ports):
+    """Validate a Hysteria endpoint request without changing the host."""
+    if not isinstance(domain, str):
+        fail("Enter a valid public domain name")
+    domain = domain.strip().lower().rstrip(".")
+    if (not domain or len(domain) > 253 or "." not in domain
+            or not re.fullmatch(
+                r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+"
+                r"[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?",
+                domain,
+            )):
+        fail("Enter a valid fully qualified domain name")
+    if not isinstance(ports, str) or not ports or len(ports) > 64:
+        fail("Enter one or more UDP ports separated by commas")
+    raw_ports = [item.strip() for item in ports.split(",")]
+    if not raw_ports or len(raw_ports) > 8 or any(
+            not item or not item.isascii() or not item.isdecimal() for item in raw_ports):
+        fail("Enter up to 8 individual UDP ports separated by commas")
+    numbers = [int(item, 10) for item in raw_ports]
+    if any(number < 1 or number > 65535 for number in numbers):
+        fail("UDP ports must be between 1 and 65535")
+    if len(set(numbers)) != len(numbers):
+        fail("Remove duplicate UDP ports")
+    return {
+        "valid": True,
+        "domain": domain,
+        "udp_ports": numbers,
+        "listener_strategy": "separate-listeners",
+        "service_changed": False,
+        "firewall_changed": False,
+        "dns_checked": False,
+        "ports_checked": False,
+    }
+
+
 XRAY_CLIENTS_FILE = "xray-clients.json"
 
 
@@ -2460,6 +2495,11 @@ def xray_revoke_client(name):
 
 def handle_hysteria_action(request):
     action = request.get("action")
+    if action == "hysteria_validate":
+        if set(request) != {"action", "domain", "ports"}:
+            fail("Unexpected request fields")
+        print(json.dumps(hysteria_validate(request["domain"], request["ports"])))
+        return True
     if action == "hysteria_install":
         if set(request) != {"action"}:
             fail("Unexpected request fields")
