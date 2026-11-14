@@ -433,7 +433,7 @@ def create_app(test_config=None):
         key_path = request.form.get("key_path", "")
         try:
             result = json.loads(run_helper(
-                "hysteria_single_port_configure", timeout=90, domain=domain, port=port,
+                "hysteria_single_port_configure", timeout=180, domain=domain, port=port,
                 cert_path=cert_path, key_path=key_path
             ) or "{}")
             if (result.get("configured") is not True
