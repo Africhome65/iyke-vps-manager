@@ -2007,7 +2007,7 @@ def test_hysteria_http01_configure_refuses_occupied_tcp80_before_writing(monkeyp
         helper.hysteria_configure_http01("vpn.example.com", "8443", "admin@example.com")
 
 
-def test_hysteria_start_refuses_http01_when_tcp80_becomes_occupied(tmp_path, monkeypatch):
+def test_hysteria_start_refuses_http01_when_tcp80_becomes_occupied(tmp_path, monkeypatch, capsys):
     config_path, unit_path = _prepare_hysteria_start_files(tmp_path, monkeypatch)
     acme_dir = tmp_path / "acme"
     acme_dir.mkdir(mode=0o700)
@@ -2034,8 +2034,9 @@ def test_hysteria_start_refuses_http01_when_tcp80_becomes_occupied(tmp_path, mon
     monkeypatch.setattr(helper, "_hysteria_tcp_listener_check", lambda port: False)
     monkeypatch.setattr(helper.subprocess, "run",
                         lambda *a, **k: pytest.fail("must not invoke systemd when port 80 is occupied"))
-    with pytest.raises(SystemExit, match="TCP port 80 is occupied"):
+    with pytest.raises(SystemExit):
         helper.hysteria_start_service()
+    assert "TCP port 80 is occupied" in capsys.readouterr().err
 
 
 def test_hysteria_http01_firewall_adds_only_tcp80(tmp_path, monkeypatch):
