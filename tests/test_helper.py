@@ -1063,11 +1063,92 @@ def test_openvpn_create_client_uses_trusted_easyrsa_and_never_returns_key(tmp_pa
     monkeypatch.setattr(helper.subprocess, "run", fake_run)
     result = helper.openvpn_create_client("phone01")
     assert result == {"created": True, "name": "phone01"}
-    assert calls[0][0] == [str(script), "--batch", "build-client-full", "phone01", "nopass"]
+    assert calls[0][0] == [
+        "/bin/sh", "-c", 'umask 077; exec "$@"', "iyke-openvpn-easyrsa",
+        str(script), "--batch", "build-client-full", "phone01", "nopass"
+    ]
     assert calls[0][1]["env"]["EASYRSA_PKI"] == str(pki)
     assert calls[0][1]["env"]["EASYRSA_BATCH"] == "1"
     assert calls[0][1]["timeout"] == 90
     assert "PRIVATE KEY" not in json.dumps(result)
+    assert stat.S_IMODE((pki / "private" / "phone01.key").stat().st_mode) == 0o600
+
+
+def test_openvpn_create_client_restricts_permissive_key_before_success(tmp_path, monkeypatch):
+    pki = tmp_path / "pki"
+    for name in ("issued", "private"):
+        (pki / name).mkdir(parents=True, mode=0o700)
+        (pki / name).chmod(0o700)
+    pki.chmod(0o700)
+    script = tmp_path / "easyrsa"
+    script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    script.chmod(0o700)
+    _pretend_root_owned(monkeypatch)
+    monkeypatch.setattr(helper, "_openvpn_unique_pki", lambda require_ca_key=False: (str(pki), ""))
+    monkeypatch.setattr(helper, "_openvpn_pki_lock", lambda path: __import__("contextlib").nullcontext())
+    monkeypatch.setattr(helper, "_openvpn_easyrsa_path", lambda: str(script))
+    monkeypatch.setattr(helper, "_openvpn_certificate_is_client", lambda path: True)
+    updated = "V\t301231235959Z\t\t01\tunknown\t/CN=phone01\n"
+    monkeypatch.setattr(helper, "_read_openvpn_index", lambda path: updated)
+
+    def fake_run(args, **kwargs):
+        key = pki / "private" / "phone01.key"
+        key.write_text("PRIVATE KEY MATERIAL", encoding="utf-8")
+        key.chmod(0o644)
+        cert = pki / "issued" / "phone01.crt"
+        cert.write_text("PUBLIC CERTIFICATE", encoding="utf-8")
+        cert.chmod(0o600)
+        return helper.subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(helper.subprocess, "run", fake_run)
+    result = helper.openvpn_create_client("phone01")
+    assert result == {"created": True, "name": "phone01"}
+    assert stat.S_IMODE((pki / "private" / "phone01.key").stat().st_mode) == 0o600
+
+
+def test_openvpn_create_client_revokes_certificate_after_post_issue_validation_failure(tmp_path, monkeypatch):
+    pki = tmp_path / "pki"
+    for name in ("issued", "private"):
+        (pki / name).mkdir(parents=True, mode=0o700)
+        (pki / name).chmod(0o700)
+    pki.chmod(0o700)
+    script = tmp_path / "easyrsa"
+    script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    script.chmod(0o700)
+    _pretend_root_owned(monkeypatch)
+    initial = "V\t301231235959Z\t\t01\tunknown\t/CN=phone01\n"
+    revoked = "R\t301231235959Z\t261114000000Z\t01\tunknown\t/CN=phone01\n"
+    index_state = {"value": initial}
+    monkeypatch.setattr(helper, "_openvpn_unique_pki", lambda require_ca_key=False: (str(pki), initial))
+    monkeypatch.setattr(helper, "_openvpn_pki_lock", lambda path: __import__("contextlib").nullcontext())
+    monkeypatch.setattr(helper, "_openvpn_easyrsa_path", lambda: str(script))
+    monkeypatch.setattr(helper, "_read_openvpn_index", lambda path: index_state["value"])
+    monkeypatch.setattr(helper, "_openvpn_certificate_is_client", lambda path: False)
+
+    def fake_issue(args, **kwargs):
+        key = pki / "private" / "phone01.key"
+        key.write_text("PRIVATE KEY MATERIAL", encoding="utf-8")
+        key.chmod(0o644)
+        cert = pki / "issued" / "phone01.crt"
+        cert.write_text("INVALID CLIENT CERTIFICATE", encoding="utf-8")
+        cert.chmod(0o600)
+        index_state["value"] = initial
+        return helper.subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(helper.subprocess, "run", fake_issue)
+    easyrsa_calls = []
+
+    def fake_easyrsa(easyrsa, pki_path, arguments):
+        easyrsa_calls.append(arguments)
+        if arguments[0] == "revoke":
+            index_state["value"] = revoked
+
+    monkeypatch.setattr(helper, "_openvpn_run_easyrsa", fake_easyrsa)
+    with pytest.raises(SystemExit):
+        helper.openvpn_create_client("phone01")
+    assert stat.S_IMODE((pki / "private" / "phone01.key").stat().st_mode) == 0o600
+    assert helper._openvpn_index_clients(index_state["value"])[0]["status"] == "revoked"
+    assert easyrsa_calls == [["revoke", "phone01"], ["gen-crl"]]
 
 
 def test_openvpn_create_client_rejects_invalid_or_reserved_names(monkeypatch):
