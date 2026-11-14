@@ -143,6 +143,21 @@
         <button type="submit">Check domain and UDP ports</button>
       </form>
       <hr>
+      <h3>Apply single-port configuration (explicit confirmation)</h3>
+      <p class="muted">This creates a dedicated root-owned configuration and a separate systemd unit, then reloads systemd. It does not start or enable the service and does not change firewall rules. The certificate and key must already be installed and readable by the Hysteria account.</p>
+      <form method="post" action="{{ url_for('configure_hysteria_single_port') }}" onsubmit="return confirm('Create the dedicated Hysteria configuration and disabled service unit? The service will not start and the firewall will not change.');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label for="hysteria-apply-domain">Domain</label>
+        <input id="hysteria-apply-domain" name="domain" maxlength="253" required placeholder="vpn.example.com">
+        <label for="hysteria-apply-port">Single UDP port</label>
+        <input id="hysteria-apply-port" name="port" type="number" min="1" max="65535" required placeholder="8443">
+        <label for="hysteria-apply-cert-path">TLS certificate or full-chain path</label>
+        <input id="hysteria-apply-cert-path" name="cert_path" maxlength="4096" required placeholder="/etc/letsencrypt/live/vpn.example.com/fullchain.pem">
+        <label for="hysteria-apply-key-path">TLS private-key path</label>
+        <input id="hysteria-apply-key-path" name="key_path" maxlength="4096" required placeholder="/etc/letsencrypt/live/vpn.example.com/privkey.pem">
+        <button type="submit">Confirm and create disabled configuration</button>
+      </form>
+      <hr>
       <h3>Single-port TLS preflight (read-only)</h3>
       <p class="muted">Check one UDP port and an existing certificate/private-key pair. The files must match the domain and be readable by the Hysteria service account. This preview does not create configuration, start services or change firewall rules.</p>
       <form method="post" action="{{ url_for('preview_hysteria_single_port') }}">
