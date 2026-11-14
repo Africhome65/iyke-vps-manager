@@ -332,6 +332,23 @@ def create_app(test_config=None):
             flash(str(exc), "error")
         return redirect(url_for("vpn_services"))
 
+    @app.post("/vpn/openvpn/clients")
+    @login_required
+    def create_openvpn_client():
+        name = request.form.get("name", "").strip().lower()
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name) or name in {"root", "server", "ca"}:
+            flash("Use a client name with lowercase letters, numbers, hyphens or underscores.", "error")
+            return redirect(url_for("vpn_services"))
+        try:
+            result = json.loads(run_helper("openvpn_create_client", timeout=120, name=name) or "{}")
+            if result.get("created") is not True or result.get("name") != name:
+                raise RuntimeError("OpenVPN client issuance could not be verified")
+            audit("openvpn_client_created", f"Issued OpenVPN client certificate {name}")
+            flash(f"OpenVPN client certificate {name} was issued. Profile delivery is the next step.", "success")
+        except (RuntimeError, json.JSONDecodeError) as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("vpn_services"))
+
     @app.post("/vpn/wireguard/install")
     @login_required
     def install_wireguard():
