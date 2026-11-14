@@ -46,6 +46,32 @@
     <div class="section-heading"><div><h2>Xray-core</h2><p class="muted">Engine for VLESS and VMess</p></div><span class="vpn-state {{ 'available' if vpn.xray.installed else 'missing' }}">{{ 'Installed' if vpn.xray.installed else 'Not installed' }}</span></div>
     {% if vpn.xray.installed %}
       <div class="vpn-instance"><b>System service</b><span class="vpn-state {{ 'available' if vpn.xray.service == 'active' else 'missing' }}">{{ vpn.xray.service|title }}</span></div>
+      <hr>
+      <h3>Create a client</h3>
+      <form method="post" action="{{ url_for('create_xray_client') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label for="xray-name">Client name</label>
+        <input id="xray-name" name="name" maxlength="31" pattern="[a-z][a-z0-9_-]{0,30}" required placeholder="phone01">
+        <label for="xray-protocol">Protocol</label>
+        <select id="xray-protocol" name="protocol" required>
+          <option value="vless">VLESS</option>
+          <option value="vmess">VMess</option>
+        </select>
+        <button type="submit">Create client</button>
+      </form>
+      <h3>Xray clients</h3>
+      {% if xray_clients %}
+        <div class="vpn-list">{% for client in xray_clients %}
+          <div class="vpn-instance">
+            <div><b>{{ client.name }}</b><small class="muted">{{ client.protocol|upper }}</small></div>
+            <form method="post" action="{{ url_for('revoke_xray_client', name=client.name) }}" class="inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button class="secondary" type="submit">Revoke</button>
+            </form>
+          </div>
+        {% endfor %}</div>
+      {% else %}<p class="empty">No Xray clients have been created yet.</p>{% endif %}
+      <p class="muted">These are protected client identity records only. Public listeners, TLS/REALITY, port 80/443 routing and downloadable connection profiles are not enabled yet. Do not use these records to connect until that setup is completed.</p>
     {% else %}
       <p class="muted">Install the official Xray-core engine. This does not create VLESS/VMess listeners, obtain certificates, change DNS or alter firewall rules.</p>
       <form method="post" action="{{ url_for('install_xray') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit">Install Xray-core</button></form>
