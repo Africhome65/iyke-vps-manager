@@ -929,21 +929,45 @@ def _openvpn_single_directive(directives, key, default=None):
     return values[0][0]
 
 
+def _openvpn_ca_cert_matches(config_ca_path, pki):
+    """Compare trusted CA certificate identities, not their filesystem paths."""
+    config_fd = _openvpn_trusted_file(config_ca_path, 1024 * 1024)
+    pki_fd = _openvpn_trusted_file(os.path.join(pki, "ca.crt"), 1024 * 1024)
+    if config_fd is None or pki_fd is None:
+        if config_fd is not None:
+            os.close(config_fd)
+        if pki_fd is not None:
+            os.close(pki_fd)
+        return False
+    try:
+        openssl = shutil.which("openssl")
+        if not openssl:
+            return False
+        der_values = []
+        for fd in (config_fd, pki_fd):
+            try:
+                result = subprocess.run(
+                    [openssl, "x509", "-in", f"/proc/self/fd/{fd}", "-outform", "DER"],
+                    capture_output=True, check=False, timeout=10, pass_fds=(fd,),
+                )
+            except (OSError, subprocess.SubprocessError):
+                return False
+            if result.returncode != 0 or not result.stdout:
+                return False
+            der_values.append(result.stdout)
+        return der_values[0] == der_values[1]
+    finally:
+        os.close(config_fd)
+        os.close(pki_fd)
+
+
 def _openvpn_config_uses_pki_ca(config_path, directives, pki):
-    """Require the active server to use this PKI's exact protected CA certificate."""
+    """Require the active server CA to be identical to the trusted Easy-RSA CA."""
     ca_value = _openvpn_single_directive(directives, "ca")
     if not ca_value:
         return False
     ca_path = ca_value if os.path.isabs(ca_value) else os.path.join(os.path.dirname(config_path), ca_value)
-    ca_path = os.path.abspath(ca_path)
-    expected = os.path.abspath(os.path.join(pki, "ca.crt"))
-    if os.path.normpath(ca_path) != os.path.normpath(expected):
-        return False
-    ca_fd = _openvpn_trusted_file(ca_path, 1024 * 1024)
-    if ca_fd is None:
-        return False
-    os.close(ca_fd)
-    return True
+    return _openvpn_ca_cert_matches(os.path.abspath(ca_path), pki)
 
 
 
@@ -1204,7 +1228,7 @@ def _openvpn_crl_state(config_path):
     ca_path = ca_directives[0]
     if not os.path.isabs(ca_path):
         ca_path = os.path.join(os.path.dirname(config_path), ca_path)
-    if os.path.abspath(ca_path) != os.path.join(pki, "ca.crt"):
+    if not _openvpn_ca_cert_matches(os.path.abspath(ca_path), pki):
         return {"crl_configured": True, "crl_file_present": False}
     crl_fd = _openvpn_trusted_file(os.path.join(pki, "crl.pem"))
     ca_fd = _openvpn_trusted_file(os.path.join(pki, "ca.crt"))
