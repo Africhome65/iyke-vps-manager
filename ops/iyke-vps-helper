@@ -237,7 +237,7 @@ def _openvpn_crl_state(config_path):
         directive = line.split("#", 1)[0].strip()
         match = re.match(r"^crl-verify\s+(\S+)(?:\s+.*)?$", directive)
         if match:
-            crl_path = match.group(1).strip('"\\'')
+            crl_path = match.group(1).strip("\\\"'")
             break
     if not crl_path:
         return {"crl_configured": False, "crl_ready": False}
