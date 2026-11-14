@@ -746,7 +746,11 @@ def openvpn_revoke_client(name):
     cert_path = os.path.join(pki, "issued", name + ".crt")
     key_path = os.path.join(pki, "private", name + ".key")
     with _openvpn_pki_lock(pki):
-        index_text = _read_openvpn_index(os.path.join(pki, "index.txt"))
+        locked_pki, locked_index = _openvpn_unique_pki(require_ca_key=True)
+        if os.path.realpath(locked_pki) != os.path.realpath(pki):
+            fail("The trusted Easy-RSA database changed while acquiring its lock")
+        pki = locked_pki
+        index_text = locked_index
         if index_text is None:
             fail("Easy-RSA certificate database is unavailable or unsafe")
         records = _openvpn_index_clients(index_text)
@@ -904,8 +908,7 @@ def _openvpn_certificate_is_client(cert_path):
     finally:
         os.close(cert_fd)
 
-def openvpn_get_profile(name, endpoint):
-    """Build an inline client profile only for a narrowly validated server config."""
+def _openvpn_validate_profile_endpoint(name, endpoint):
     if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name):
         fail("Invalid OpenVPN client name")
     if not isinstance(endpoint, str) or len(endpoint) > 253:
@@ -915,15 +918,29 @@ def openvpn_get_profile(name, endpoint):
         address = ipaddress.ip_address(endpoint)
         if not address.is_global:
             fail("OpenVPN endpoint must be a public IP address or DNS name")
-        endpoint = str(address)
+        return str(address)
     except ValueError:
         if "." not in endpoint or not re.fullmatch(
             r"(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*",
             endpoint
         ):
             fail("Enter a valid public DNS name or IP address")
+        return endpoint
 
-    pki, index_text = _openvpn_unique_pki()
+
+def openvpn_get_profile(name, endpoint):
+    """Serialize profile reads with issuance/revocation and use the locked PKI snapshot."""
+    endpoint = _openvpn_validate_profile_endpoint(name, endpoint)
+    pki, _index = _openvpn_unique_pki()
+    with _openvpn_pki_lock(pki):
+        locked_pki, index_text = _openvpn_unique_pki()
+        if os.path.realpath(locked_pki) != os.path.realpath(pki):
+            fail("The trusted Easy-RSA database changed while acquiring its lock")
+        return _openvpn_get_profile_unlocked(name, endpoint, locked_pki, index_text)
+
+
+def _openvpn_get_profile_unlocked(name, endpoint, pki, index_text):
+    """Build an inline client profile only for a narrowly validated server config."""
     records = _openvpn_index_clients(index_text)
     if not any(row["common_name"] == name and row["status"] == "valid" for row in records):
         fail("A valid client certificate for this name was not found")
