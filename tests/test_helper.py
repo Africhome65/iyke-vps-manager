@@ -222,7 +222,7 @@ def test_vpn_status_reports_missing_software(monkeypatch):
 
 def test_openvpn_crl_state_reports_missing_directive(tmp_path, monkeypatch):
     config = tmp_path / "server.conf"
-    config.write_text("port 1194\\nproto udp\\n", encoding="utf-8")
+    config.write_text("port 1194\nproto udp\n", encoding="utf-8")
     _pretend_root_owned(monkeypatch)
     assert helper._openvpn_crl_state(str(config)) == {
         "crl_configured": False, "crl_file_present": False
@@ -232,8 +232,8 @@ def test_openvpn_crl_state_reports_missing_directive(tmp_path, monkeypatch):
 def test_openvpn_crl_state_checks_relative_crl_file(tmp_path, monkeypatch):
     config = tmp_path / "server.conf"
     crl = tmp_path / "crl.pem"
-    config.write_text("port 1194\\ncrl-verify crl.pem\\n", encoding="utf-8")
-    crl.write_text("public CRL data\\n", encoding="utf-8")
+    config.write_text("port 1194\ncrl-verify crl.pem\n", encoding="utf-8")
+    crl.write_text("public CRL data\n", encoding="utf-8")
     _pretend_root_owned(monkeypatch)
     assert helper._openvpn_crl_state(str(config)) == {
         "crl_configured": True, "crl_file_present": True
@@ -242,7 +242,7 @@ def test_openvpn_crl_state_checks_relative_crl_file(tmp_path, monkeypatch):
 
 def test_openvpn_crl_state_ignores_commented_directive(tmp_path, monkeypatch):
     config = tmp_path / "server.conf"
-    config.write_text("# crl-verify crl.pem\\nport 1194\\n", encoding="utf-8")
+    config.write_text("# crl-verify crl.pem\nport 1194\n", encoding="utf-8")
     _pretend_root_owned(monkeypatch)
     assert helper._openvpn_crl_state(str(config)) == {
         "crl_configured": False, "crl_file_present": False
@@ -253,8 +253,8 @@ def test_openvpn_crl_state_rejects_symlink_crl(tmp_path, monkeypatch):
     config = tmp_path / "server.conf"
     target = tmp_path / "actual-crl.pem"
     link = tmp_path / "crl.pem"
-    config.write_text("crl-verify crl.pem\\n", encoding="utf-8")
-    target.write_text("public CRL data\\n", encoding="utf-8")
+    config.write_text("crl-verify crl.pem\n", encoding="utf-8")
+    target.write_text("public CRL data\n", encoding="utf-8")
     link.symlink_to(target)
     _pretend_root_owned(monkeypatch)
     assert helper._openvpn_crl_state(str(config)) == {
@@ -265,8 +265,8 @@ def test_openvpn_crl_state_rejects_symlink_crl(tmp_path, monkeypatch):
 def test_openvpn_crl_state_rejects_group_or_world_writable_crl(tmp_path, monkeypatch):
     config = tmp_path / "server.conf"
     crl = tmp_path / "crl.pem"
-    config.write_text("crl-verify crl.pem\\n", encoding="utf-8")
-    crl.write_text("public CRL data\\n", encoding="utf-8")
+    config.write_text("crl-verify crl.pem\n", encoding="utf-8")
+    crl.write_text("public CRL data\n", encoding="utf-8")
     crl.chmod(0o666)
     _pretend_root_owned(monkeypatch)
     assert helper._openvpn_crl_state(str(config)) == {
@@ -276,7 +276,7 @@ def test_openvpn_crl_state_rejects_group_or_world_writable_crl(tmp_path, monkeyp
 
 def test_openvpn_crl_state_reports_missing_crl_file(tmp_path, monkeypatch):
     config = tmp_path / "server.conf"
-    config.write_text("crl-verify missing-crl.pem\\n", encoding="utf-8")
+    config.write_text("crl-verify missing-crl.pem\n", encoding="utf-8")
     _pretend_root_owned(monkeypatch)
     assert helper._openvpn_crl_state(str(config)) == {
         "crl_configured": True, "crl_file_present": False
