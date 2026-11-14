@@ -508,7 +508,7 @@ def _openvpn_crl_contains_serial(crl_path, serial):
         if result.returncode != 0:
             return False
         expected = serial.lstrip("0").upper() or "0"
-        for value in re.findall(r"Serial Number:\\s*(?:0x)?([0-9A-Fa-f:]+)", result.stdout):
+        for value in re.findall(r"Serial Number:\s*(?:0x)?([0-9A-Fa-f:]+)", result.stdout):
             normalized = value.replace(":", "").lstrip("0").upper() or "0"
             if normalized == expected:
                 return True
