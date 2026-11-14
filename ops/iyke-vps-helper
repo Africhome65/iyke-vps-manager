@@ -14,6 +14,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 import urllib.parse
 import uuid
@@ -2170,6 +2171,31 @@ def hysteria_configure_single_port(domain, port, cert_path, key_path):
 
 
 
+
+def _hysteria_udp_listener_present(port):
+    ss = shutil.which("ss")
+    if not ss:
+        fail("UDP listener inspection is unavailable; service readiness cannot be verified")
+    try:
+        result = subprocess.run([ss, "-H", "-lun"], text=True, capture_output=True,
+                                check=False, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        fail("UDP listener inspection failed; service readiness cannot be verified")
+    if result.returncode != 0:
+        fail("UDP listener inspection failed; service readiness cannot be verified")
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) < 4:
+            fail("UDP listener output could not be safely interpreted")
+        try:
+            local_port = int(fields[3].rsplit(":", 1)[1])
+        except (ValueError, IndexError):
+            fail("UDP listener output could not be safely interpreted")
+        if local_port == port:
+            return True
+    return False
+
+
 def _hysteria_ufw_tcp80_allowed():
     ufw = shutil.which("ufw")
     if not ufw:
@@ -2287,12 +2313,25 @@ def hysteria_start_service():
         subprocess.run([systemctl, "stop", "iyke-hysteria.service"],
                        text=True, capture_output=True, check=False, timeout=30)
         fail("Hysteria failed to start; only the dedicated Hysteria unit was stopped")
-    active_check = subprocess.run([systemctl, "is-active", "iyke-hysteria.service"],
-                                  text=True, capture_output=True, check=False, timeout=15)
-    if active_check.returncode != 0 or active_check.stdout.strip() != "active":
+    ready_deadline = time.monotonic() + (180 if tls_mode == "acme-http01" else 30)
+    listener_ready = False
+    while time.monotonic() < ready_deadline:
+        active_check = subprocess.run(
+            [systemctl, "is-active", "iyke-hysteria.service"],
+            text=True, capture_output=True, check=False, timeout=15,
+        )
+        if active_check.returncode != 0 or active_check.stdout.strip() != "active":
+            subprocess.run([systemctl, "stop", "iyke-hysteria.service"],
+                           text=True, capture_output=True, check=False, timeout=30)
+            fail("Hysteria exited before its UDP listener became ready; the dedicated unit was stopped")
+        if _hysteria_udp_listener_present(int(config["listen"][1:])):
+            listener_ready = True
+            break
+        time.sleep(1)
+    if not listener_ready:
         subprocess.run([systemctl, "stop", "iyke-hysteria.service"],
                        text=True, capture_output=True, check=False, timeout=30)
-        fail("Hysteria did not remain active; the dedicated unit was stopped")
+        fail("Hysteria did not open its configured UDP listener in time; the dedicated unit was stopped")
     enabled_result = subprocess.run([systemctl, "enable", "iyke-hysteria.service"],
                                     text=True, capture_output=True, check=False, timeout=30)
     enabled_check = subprocess.run([systemctl, "is-enabled", "iyke-hysteria.service"],
