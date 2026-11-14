@@ -332,7 +332,9 @@ def openvpn_clients():
     return {"available": True, "reason": "", "clients": _openvpn_index_clients(index_text)}
 
 def _openvpn_crl_state(config_path):
-    """Report CRL enforcement readiness without exposing configuration contents."""
+    """Report CRL file presence only when every parent directory is trusted."""
+    if not _safe_root_directory(os.path.dirname(os.path.abspath(config_path))):
+        return {"crl_configured": False, "crl_file_present": False}
     fd = None
     try:
         fd = os.open(config_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
@@ -366,6 +368,9 @@ def _openvpn_crl_state(config_path):
 
     if not os.path.isabs(crl_path):
         crl_path = os.path.join(os.path.dirname(config_path), crl_path)
+    crl_path = os.path.abspath(crl_path)
+    if not _safe_root_directory(os.path.dirname(crl_path)):
+        return {"crl_configured": True, "crl_file_present": False}
     crl_fd = None
     try:
         crl_fd = os.open(crl_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
