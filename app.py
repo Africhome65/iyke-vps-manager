@@ -366,12 +366,28 @@ def create_app(test_config=None):
                 f"Validated domain {result['domain']} and UDP ports "
                 + ", ".join(str(port) for port in result["udp_ports"]),
             )
+            dns_message = (
+                "DNS resolves to " + ", ".join(result.get("dns_addresses", []))
+                if result.get("dns_resolves") else
+                "DNS did not resolve" if result.get("dns_checked") else
+                "DNS check unavailable"
+            )
+            if result.get("ports_checked"):
+                occupied = result.get("occupied_ports", [])
+                port_message = (
+                    "UDP port(s) already have local listeners: "
+                    + ", ".join(str(port) for port in occupied)
+                    if occupied else "No selected UDP port has a detected local listener"
+                )
+            else:
+                port_message = "UDP listener check unavailable"
             flash(
-                "Input check passed for " + result["domain"] + " on UDP "
-                + ", ".join(str(port) for port in result["udp_ports"])
-                + ". DNS, port availability and TLS have not been checked; "
+                "Read-only Hysteria preflight for " + result["domain"] + ": "
+                + dns_message + ". " + port_message
+                + ". DNS target matching, external reachability and TLS are not verified; "
                   "nothing was applied.",
-                "success",
+                "success" if result.get("dns_resolves") and result.get("ports_checked")
+                and not result.get("occupied_ports") else "warning",
             )
         except (RuntimeError, json.JSONDecodeError, KeyError, TypeError) as exc:
             flash(str(exc), "error")
