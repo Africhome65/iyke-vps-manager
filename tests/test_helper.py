@@ -2096,7 +2096,7 @@ def test_hysteria_udp_listener_check_requires_exact_port(monkeypatch):
     monkeypatch.setattr(
         helper.subprocess, "run",
         lambda command, **kwargs: helper.subprocess.CompletedProcess(
-            command, 0, "UNCONN 0 0 *:8443 *:*\n", ""
+            command, 0, "UNCONN 0 0 *:8443 *:* users:(("hysteria",pid=1234,fd=5))\n", ""
         ),
     )
     assert helper._hysteria_udp_listener_present(8443) is True
