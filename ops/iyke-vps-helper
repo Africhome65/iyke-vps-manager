@@ -1092,12 +1092,12 @@ def _xray_apply_config(config, original_raw, original_mode):
                            capture_output=True, check=True, timeout=45)
             if _unit_state("xray.service") != "active":
                 raise RuntimeError("Xray did not return to active state")
-        except (OSError, subprocess.SubprocessError, RuntimeError):
+        except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired, RuntimeError):
             _xray_atomic_restore(original_raw, original_mode)
             try:
                 subprocess.run(["systemctl", "restart", "xray.service"], text=True,
                                capture_output=True, check=True, timeout=45)
-            except (OSError, subprocess.SubprocessError):
+            except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired):
                 fail("Xray restart failed and the original config was restored; service recovery is required")
             fail("Xray restart failed; the original configuration was restored")
     except subprocess.TimeoutExpired:
