@@ -1251,7 +1251,15 @@ def _apply_xray_config_change(candidate, original_raw, metadata):
             or latest_metadata.st_mtime_ns != metadata.st_mtime_ns):
         fail("Xray configuration changed during validation; refusing to overwrite the newer version")
     backup = _save_xray_backup(original_raw)
-    _atomic_xray_config_write(encoded, metadata)
+    try:
+        _atomic_xray_config_write(encoded, metadata)
+    except SystemExit:
+        # If a post-rename durability check failed, put the previous bytes back.
+        try:
+            _atomic_xray_config_write(original_raw, metadata)
+        except SystemExit:
+            fail("Xray config replacement failed and automatic restoration also failed; manual recovery is required")
+        raise
     try:
         result = subprocess.run(["systemctl", "restart", "xray.service"], text=True,
                                 capture_output=True, check=False, timeout=45)
