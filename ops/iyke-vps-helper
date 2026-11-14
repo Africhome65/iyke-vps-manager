@@ -426,7 +426,7 @@ def _openvpn_crl_state(config_path):
 
 def _openvpn_runtime_config_matches(unit, expected_config):
     """Require the active MainPID to be OpenVPN itself and pass exactly this config."""
-    if not re.fullmatch(r"openvpn(?:-server)?@[A-Za-z0-9_.-]{1,64}\\.service", unit):
+    if not re.fullmatch(r"openvpn(?:-server)?@[A-Za-z0-9_.-]{1,64}\.service", unit):
         return False
     if _unit_state(unit) != "active":
         return False
