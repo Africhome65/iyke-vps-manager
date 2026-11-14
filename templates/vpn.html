@@ -40,7 +40,17 @@
     {% if vpn.openvpn.installed %}
       {% if vpn.openvpn.instances %}<div class="vpn-list">{% for item in vpn.openvpn.instances %}<div class="vpn-instance"><div><b>{{ item.name }}</b><small class="muted">CRL: {{ 'configured; file present' if item.crl_configured and item.crl_file_present else ('configured; file missing or unsafe' if item.crl_configured else 'not configured') }}</small></div><span class="vpn-state {{ 'available' if item.status == 'active' else 'missing' }}">{{ item.status|title }}</span></div>{% endfor %}</div>
       {% else %}<p class="empty">OpenVPN is installed, but no server configuration files were found.</p>{% endif %}
-    {% else %}<p class="muted">OpenVPN client management is being developed. This panel currently reports service and CRL status only.</p>{% endif %}
+      <hr>
+      <h3>Certificate inventory (read-only)</h3>
+      {% if openvpn_inventory.available %}
+        {% if openvpn_inventory.clients %}
+          <p class="muted">Easy-RSA certificate records. This list may include the VPN server certificate; no certificate or private-key files are opened.</p>
+          <div class="vpn-list">{% for cert in openvpn_inventory.clients %}
+            <div class="vpn-instance"><div><b>{{ cert.common_name }}</b><small class="muted">Expires {{ cert.expires }} · Serial {{ cert.serial }}</small></div><span class="vpn-state {{ 'available' if cert.status == 'valid' else 'missing' }}">{{ cert.status|title }}</span></div>
+          {% endfor %}</div>
+        {% else %}<p class="empty">The Easy-RSA database was found, but it contains no readable certificate records.</p>{% endif %}
+      {% else %}<p class="muted">{{ openvpn_inventory.reason }}. Inventory is unavailable; no changes have been made.</p>{% endif %}
+    {% else %}<p class="muted">OpenVPN client management is being developed. The panel currently reports service, CRL and read-only certificate inventory status.</p>{% endif %}
   </section>
   <section class="panel">
     <div class="section-heading"><div><h2>Xray-core</h2><p class="muted">Engine for VLESS and VMess</p></div><span class="vpn-state {{ 'available' if vpn.xray.installed else 'missing' }}">{{ 'Installed' if vpn.xray.installed else 'Not installed' }}</span></div>
