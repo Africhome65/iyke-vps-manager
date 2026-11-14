@@ -973,7 +973,11 @@ def test_hysteria_readiness_fails_closed_when_socket_inspection_unavailable(monk
     assert result["occupied_ports"] == []
 
 
-def test_hysteria_action_validates_exact_request_shape(capsys):
+def test_hysteria_action_validates_exact_request_shape(capsys, monkeypatch):
+    monkeypatch.setattr(helper, "hysteria_readiness", lambda domain, ports: {
+        "valid": True, "domain": domain, "udp_ports": [53, 8443],
+        "service_changed": False,
+    })
     assert helper.handle_hysteria_action({
         "action": "hysteria_validate", "domain": "vpn.example.com", "ports": "53,8443"
     })
