@@ -2035,7 +2035,9 @@ def hysteria_readiness(domain, ports):
                     line.split()[0] for line in lookup.stdout.splitlines()
                     if line.split()
                 })
-        except subprocess.TimeoutExpired:
+        except (OSError, subprocess.TimeoutExpired):
+            # A command disappearing or failing to spawn is an unavailable check,
+            # not evidence that DNS does not resolve.
             dns_checked = True
 
     listeners = None
@@ -2057,7 +2059,8 @@ def hysteria_readiness(domain, ports):
                         listeners.add(int(fields[3].rsplit(":", 1)[1]))
                     except (ValueError, IndexError):
                         continue
-        except subprocess.TimeoutExpired:
+        except (OSError, subprocess.TimeoutExpired):
+            # Never mark a port free when socket inspection could not run.
             pass
 
     occupied = sorted(set(result["udp_ports"]) & listeners) if listeners is not None else []
