@@ -331,61 +331,97 @@ def openvpn_clients():
     _path, index_text = candidates[0]
     return {"available": True, "reason": "", "clients": _openvpn_index_clients(index_text)}
 
-def _openvpn_crl_state(config_path):
-    """Report CRL file presence only when every parent directory is trusted."""
-    if not _safe_root_directory(os.path.dirname(os.path.abspath(config_path))):
-        return {"crl_configured": False, "crl_file_present": False}
-    fd = None
+def _openvpn_trusted_file(path, max_bytes=4 * 1024 * 1024):
+    """Open a root-owned, non-writable, single-link regular file without following links."""
+    if not _safe_root_directory(os.path.dirname(os.path.abspath(path))):
+        return None
     try:
-        fd = os.open(config_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-        config_info = os.fstat(fd)
-        if (not stat.S_ISREG(config_info.st_mode) or config_info.st_uid != 0
-                or config_info.st_nlink != 1 or stat.S_IMODE(config_info.st_mode) & 0o022):
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_nlink != 1
+                or stat.S_IMODE(info.st_mode) & 0o022 or info.st_size > max_bytes):
             os.close(fd)
-            fd = None
-            return {"crl_configured": False, "crl_file_present": False}
-        with os.fdopen(fd, "r", encoding="utf-8") as source:
-            fd = None
-            config_text = source.read(1024 * 1024 + 1)
-        if len(config_text) > 1024 * 1024:
-            return {"crl_configured": False, "crl_file_present": False}
-        lines = config_text.splitlines()
-    except (OSError, UnicodeDecodeError):
-        return {"crl_configured": False, "crl_file_present": False}
-    finally:
-        if fd is not None:
-            os.close(fd)
+            return None
+        return fd
+    except OSError:
+        return None
 
-    crl_path = None
+
+def _openvpn_crl_state(config_path):
+    """Validate one CRL against the CA in the uniquely matching trusted Easy-RSA PKI."""
+    unavailable = {"crl_configured": False, "crl_file_present": False}
+    if not _safe_root_directory(os.path.dirname(os.path.abspath(config_path))):
+        return unavailable
+    config_fd = None
+    try:
+        config_fd = _openvpn_trusted_file(config_path, 1024 * 1024)
+        if config_fd is None:
+            return unavailable
+        with os.fdopen(config_fd, "r", encoding="utf-8") as source:
+            config_fd = None
+            lines = source.read(1024 * 1024 + 1).splitlines()
+    except (OSError, UnicodeDecodeError):
+        return unavailable
+    finally:
+        if config_fd is not None:
+            os.close(config_fd)
+
+    directives = []
     for line in lines:
         directive = line.split("#", 1)[0].strip()
         match = re.match(r"^crl-verify\s+(\S+)(?:\s+.*)?$", directive)
         if match:
-            crl_path = match.group(1).strip("\\\"'")
-            break
-    if not crl_path:
-        return {"crl_configured": False, "crl_file_present": False}
+            directives.append(match.group(1).strip("\\\"'"))
+    if not directives:
+        return unavailable
+    if len(directives) != 1 or not directives[0]:
+        return {"crl_configured": True, "crl_file_present": False}
 
+    crl_path = directives[0]
     if not os.path.isabs(crl_path):
         crl_path = os.path.join(os.path.dirname(config_path), crl_path)
     crl_path = os.path.abspath(crl_path)
-    if not _safe_root_directory(os.path.dirname(crl_path)):
+
+    matching_pkis = []
+    for candidate in dict.fromkeys(os.path.normpath(p) for p in _openvpn_pki_candidates()):
+        if not _safe_root_directory(candidate):
+            continue
+        if not _safe_root_directory(os.path.join(candidate, "issued")):
+            continue
+        if not _safe_root_directory(os.path.join(candidate, "private")):
+            continue
+        if crl_path == os.path.join(candidate, "crl.pem"):
+            matching_pkis.append(candidate)
+    if len(matching_pkis) != 1:
         return {"crl_configured": True, "crl_file_present": False}
-    crl_fd = None
-    try:
-        crl_fd = os.open(crl_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-        crl_info = os.fstat(crl_fd)
-        ready = (
-            stat.S_ISREG(crl_info.st_mode) and crl_info.st_uid == 0
-            and crl_info.st_nlink == 1
-            and not (stat.S_IMODE(crl_info.st_mode) & 0o022)
-        )
-    except OSError:
-        ready = False
-    finally:
+
+    pki = matching_pkis[0]
+    crl_fd = _openvpn_trusted_file(os.path.join(pki, "crl.pem"))
+    ca_fd = _openvpn_trusted_file(os.path.join(pki, "ca.crt"))
+    if crl_fd is None or ca_fd is None:
         if crl_fd is not None:
             os.close(crl_fd)
-    return {"crl_configured": True, "crl_file_present": ready}
+        if ca_fd is not None:
+            os.close(ca_fd)
+        return {"crl_configured": True, "crl_file_present": False}
+
+    valid = False
+    try:
+        openssl = shutil.which("openssl")
+        if openssl:
+            result = subprocess.run(
+                [openssl, "crl", "-in", f"/proc/self/fd/{crl_fd}",
+                 "-CAfile", f"/proc/self/fd/{ca_fd}", "-noout", "-verify"],
+                text=True, capture_output=True, check=False, timeout=10,
+                pass_fds=(crl_fd, ca_fd),
+            )
+            valid = result.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        valid = False
+    finally:
+        os.close(crl_fd)
+        os.close(ca_fd)
+    return {"crl_configured": True, "crl_file_present": valid}
 
 
 def vpn_status():
