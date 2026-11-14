@@ -249,7 +249,7 @@ def _caddy_public_hostname():
         if fd is not None:
             os.close(fd)
     hosts = set()
-    for match in re.finditer(r"(?m)^\\s*([^\\s{}#]+)\\s*\\{\\s*(?:#.*)?$", content):
+    for match in re.finditer(r"(?m)^\s*([^\s{}#]+)\s*\{\s*(?:#.*)?$", content):
         address = match.group(1)
         # Ignore global options, localhost, wildcard and port-only site labels.
         if address.startswith(("(", ":", "localhost", "http://", "https://", "*")):
