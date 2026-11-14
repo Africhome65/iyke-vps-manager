@@ -52,9 +52,22 @@ def test_profile_builders_reject_unsafe_inputs(builder, client_id, host, path, n
 
 
 @pytest.mark.parametrize("builder", [build_vmess_uri, build_vless_uri])
-def test_profile_builders_reject_non_tls_port(builder):
+def test_profile_builders_reject_unsupported_port(builder):
     with pytest.raises(ValueError):
-        builder(CLIENT_ID, "vpn.example.net", "/ws", "phone01", port=80)
+        builder(CLIENT_ID, "vpn.example.net", "/ws", "phone01", port=8080)
+
+
+def test_vmess_plain_http_profile_uses_port_80_without_tls():
+    profile = json.loads(base64.b64decode(build_vmess_uri(CLIENT_ID, "vpn.example.net", "/vmess", "phone01", port=80).removeprefix("vmess://")))
+    assert profile["port"] == "80"
+    assert profile["tls"] == ""
+    assert profile["sni"] == ""
+
+
+def test_vless_plain_http_profile_uses_port_80_without_tls():
+    parsed = urlsplit(build_vless_uri(CLIENT_ID, "vpn.example.net", "/vless", "phone01", port=80))
+    assert parsed.port == 80
+    assert parse_qs(parsed.query) == {"encryption": ["none"], "security": ["none"], "type": ["ws"], "host": ["vpn.example.net"], "path": ["/vless"]}
 
 
 def test_profile_builder_accepts_public_ipv4_host():
