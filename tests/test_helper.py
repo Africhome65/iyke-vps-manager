@@ -1971,7 +1971,7 @@ def test_hysteria_start_verifies_active_and_enabled_dedicated_unit(tmp_path, mon
     assert result == {
         "started": True, "enabled": True, "service_state": "active",
         "service_unit": "iyke-hysteria.service", "firewall_changed": False,
-        "udp_port": 8443,
+        "udp_port": 8443, "tls_mode": "manual",
     }
     assert [c[-2:] for c in calls if c[0] == "/usr/bin/systemctl"] == [
         ["is-active", "iyke-hysteria.service"],
@@ -1981,3 +1981,26 @@ def test_hysteria_start_verifies_active_and_enabled_dedicated_unit(tmp_path, mon
         ["enable", "iyke-hysteria.service"],
         ["is-enabled", "iyke-hysteria.service"],
     ]
+
+
+def test_hysteria_http01_preflight_refuses_occupied_tcp80(monkeypatch):
+    monkeypatch.setattr(helper, "hysteria_validate", lambda domain, port: {
+        "domain": "vpn.example.com", "udp_ports": [8443]
+    })
+    monkeypatch.setattr(helper, "hysteria_readiness", lambda domain, port: {
+        "dns_resolves": True, "ports_checked": True, "available_ports": [8443]
+    })
+    monkeypatch.setattr(helper, "_hysteria_tcp_listener_check", lambda port: False)
+    with pytest.raises(SystemExit, match="TCP port 80 is already in use"):
+        helper.hysteria_http01_preview("vpn.example.com", "8443")
+
+
+def test_hysteria_http01_configure_refuses_occupied_tcp80_before_writing(monkeypatch):
+    monkeypatch.setattr(helper.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(helper, "_hysteria_http01_preflight",
+                        lambda domain, port: (_ for _ in ()).throw(
+                            SystemExit("TCP port 80 is already in use")))
+    monkeypatch.setattr(helper.os.path, "lexists",
+                        lambda path: pytest.fail("must not touch filesystem after failed preflight"))
+    with pytest.raises(SystemExit, match="TCP port 80 is already in use"):
+        helper.hysteria_configure_http01("vpn.example.com", "8443", "admin@example.com")
