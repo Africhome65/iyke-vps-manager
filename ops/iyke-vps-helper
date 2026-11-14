@@ -1988,7 +1988,7 @@ def hysteria_validate(domain, ports):
     domain = domain.strip().lower().rstrip(".")
     if (not domain or len(domain) > 253 or "." not in domain
             or not re.fullmatch(
-                r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+"
+                r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
                 r"[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?",
                 domain,
             )):
