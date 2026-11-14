@@ -62,16 +62,24 @@
       {% endif %}
       <hr>
       <h3>Xray client management</h3>
-      <p class="notice"><b>Client changes are paused for safety.</b><span>The current manager build can inspect your existing VMess and VLESS inbounds, but it cannot yet synchronize client additions or revocations with the live Xray configuration. No new client will be created and no existing client will be removed from this panel until that integration is tested.</span></p>
+      <p class="notice"><b>Existing listeners will be preserved.</b><span>New clients are added only to one unambiguous existing local WebSocket inbound. Before applying a change, the manager validates a candidate config with Xray and creates a protected backup. Applying a change restarts Xray briefly; existing connections may reconnect.</span></p>
+      <form method="post" action="{{ url_for('create_xray_client') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label for="xray-name">Client name</label><input id="xray-name" name="name" maxlength="31" pattern="[a-z][a-z0-9_-]{0,30}" required placeholder="phone01">
+        <label for="xray-protocol">Protocol</label><select id="xray-protocol" name="protocol" required><option value="vless">VLESS</option><option value="vmess">VMess</option></select>
+        <button type="submit">Create Xray client</button>
+      </form>
       {% if xray_clients %}
-        <h3>Unactivated registry entries</h3>
+        <h3>Managed Xray clients</h3>
         <div class="vpn-list">{% for client in xray_clients %}
           <div class="vpn-instance">
-            <div><b>{{ client.name }}</b><small class="muted">{{ client.protocol|upper }} · Registry record only; not confirmed active</small></div>
-            <span class="vpn-state missing">Inactive</span>
+            <div><b>{{ client.name }}</b><small class="muted">{{ client.protocol|upper }} · Live Xray client</small></div>
+            <div class="inline"><a href="{{ url_for('download_xray_profile', name=client.name) }}">Download</a><a href="{{ url_for('xray_profile_qr', name=client.name) }}" target="_blank" rel="noopener">QR code</a>
+              <form method="post" action="{{ url_for('revoke_xray_client', name=client.name) }}" class="inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="secondary" type="submit">Revoke</button></form>
+            </div>
           </div>
         {% endfor %}</div>
-      {% endif %}
+      {% else %}<p class="empty">No manager-created Xray clients yet. Existing manually configured clients are not listed or managed here.</p>{% endif %}
     {% else %}
       <p class="muted">Install the official Xray-core engine. This does not create VLESS/VMess listeners, obtain certificates, change DNS or alter firewall rules.</p>
       <form method="post" action="{{ url_for('install_xray') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit">Install Xray-core</button></form>
