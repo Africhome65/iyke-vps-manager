@@ -462,6 +462,27 @@ def test_openvpn_crl_state_verifies_crl_against_matching_ca(tmp_path, monkeypatc
     assert len(kwargs["pass_fds"]) == 2
 
 
+def test_openvpn_crl_state_rejects_server_ca_mismatch(tmp_path, monkeypatch):
+    config = tmp_path / "server.conf"
+    pki = tmp_path / "pki"
+    for name in ("issued", "private"):
+        (pki / name).mkdir(parents=True, mode=0o700)
+        (pki / name).chmod(0o700)
+    pki.chmod(0o700)
+    config.write_text("ca other-ca.crt\\ncrl-verify pki/crl.pem\\n", encoding="utf-8")
+    config.chmod(0o600)
+    for name in ("crl.pem", "ca.crt"):
+        (pki / name).write_text("public material\\n", encoding="utf-8")
+        (pki / name).chmod(0o600)
+    _pretend_root_owned(monkeypatch)
+    monkeypatch.setattr(helper, "_openvpn_pki_candidates", lambda: [str(pki)])
+    monkeypatch.setattr(helper.subprocess, "run",
+                        lambda *args, **kwargs: pytest.fail("CRL must not be verified against a different CA"))
+    assert helper._openvpn_crl_state(str(config)) == {
+        "crl_configured": True, "crl_file_present": False
+    }
+
+
 def test_openvpn_crl_state_rejects_unmatched_pki(tmp_path, monkeypatch):
     config = tmp_path / "server.conf"
     pki = tmp_path / "pki"
