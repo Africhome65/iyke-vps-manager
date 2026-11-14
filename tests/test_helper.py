@@ -545,7 +545,7 @@ def _managed_xray_test_config():
 
 def _fake_xray_metadata():
     from types import SimpleNamespace
-    return SimpleNamespace(st_uid=0, st_gid=0, st_mode=stat.S_IFREG | 0o640)
+    return SimpleNamespace(st_uid=0, st_gid=0, st_mode=stat.S_IFREG | 0o640, st_ino=123, st_mtime_ns=456)
 
 
 def test_xray_create_client_adds_only_manager_client_and_preserves_original(tmp_path, monkeypatch):
