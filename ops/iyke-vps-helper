@@ -6,6 +6,7 @@ import grp
 import json
 import ipaddress
 import os
+import pwd
 import re
 import shutil
 import secrets
@@ -2402,12 +2403,12 @@ def _hysteria_http01_preflight(domain, port):
         fail("UFW is required for the first HTTP-01 release; other firewall managers are not yet supported")
     status = subprocess.run([ufw, "status"], text=True, capture_output=True,
                             check=False, timeout=20)
-    if status.returncode != 0 or not re.search(r"^Status:\\s+active\\s*$", status.stdout, re.I | re.M):
+    if status.returncode != 0 or not re.search(r"^Status:\s+active\s*$", status.stdout, re.I | re.M):
         fail("UFW must be active so TCP port 80 can be checked and managed safely")
     allow = False
     deny = False
     for line in status.stdout.splitlines():
-        match = re.match(r"^\\s*(80)(?:/(tcp|udp))?\\s+(ALLOW|DENY|REJECT)\\s+IN\\b", line, re.I)
+        match = re.match(r"^\s*(80)(?:/(tcp|udp))?\s+(ALLOW|DENY|REJECT)\s+IN\b", line, re.I)
         if match and (match.group(2) or "any").lower() in {"tcp", "any"}:
             if match.group(3).upper() == "ALLOW":
                 allow = True
@@ -2432,7 +2433,7 @@ def hysteria_configure_http01(domain, port, email):
     if os.geteuid() != 0:
         fail("Hysteria ACME configuration requires the privileged helper")
     if not isinstance(email, str) or len(email) > 254 or not re.fullmatch(
-            r"[A-Za-z0-9.!#$%&'*+/=?^_\x60{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+",
+            r"[A-Za-z0-9.!#$%&'*+/=?^_\x60{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+",
             email.strip()):
         fail("Enter a valid email address for certificate expiry and ACME notices")
     email = email.strip()
@@ -2468,15 +2469,15 @@ def hysteria_configure_http01(domain, port, email):
         },
         "auth": {"type": "password", "password": password},
     }
-    config_text = json.dumps(config, ensure_ascii=True, indent=2) + "\\n"
+    config_text = json.dumps(config, ensure_ascii=True, indent=2) + "\n"
     unit_text = (
-        "[Unit]\\nDescription=Iyke VPS Manager Hysteria 2 server\\n"
-        "After=network-online.target\\nWants=network-online.target\\n\\n"
-        "[Service]\\nType=simple\\nUser=hysteria\\nGroup=hysteria\\n"
-        f"ExecStart={binary} server --config {HYSTERIA_CONFIG_PATH}\\n"
-        "Restart=on-failure\\nRestartSec=5s\\nNoNewPrivileges=true\\n"
-        "PrivateTmp=true\\nProtectSystem=full\\nProtectHome=read-only\\n"
-        "UMask=0027\\n\\n[Install]\\nWantedBy=multi-user.target\\n"
+        "[Unit]\nDescription=Iyke VPS Manager Hysteria 2 server\n"
+        "After=network-online.target\nWants=network-online.target\n\n"
+        "[Service]\nType=simple\nUser=hysteria\nGroup=hysteria\n"
+        f"ExecStart={binary} server --config {HYSTERIA_CONFIG_PATH}\n"
+        "Restart=on-failure\nRestartSec=5s\nNoNewPrivileges=true\n"
+        "PrivateTmp=true\nProtectSystem=full\nProtectHome=read-only\n"
+        "UMask=0027\n\n[Install]\nWantedBy=multi-user.target\n"
     )
     parent_created = False
     acme_created = False
@@ -2558,12 +2559,12 @@ def hysteria_firewall_open_http01_tcp():
         fail("UFW is unavailable; no firewall changes were made")
     status = subprocess.run([ufw, "status"], text=True, capture_output=True,
                             check=False, timeout=20)
-    if status.returncode != 0 or not re.search(r"^Status:\\s+active\\s*$", status.stdout, re.I | re.M):
+    if status.returncode != 0 or not re.search(r"^Status:\s+active\s*$", status.stdout, re.I | re.M):
         fail("UFW is not verifiably active; no firewall changes were made")
     allow = False
     deny = False
     for line in status.stdout.splitlines():
-        match = re.match(r"^\\s*80(?:/(tcp|udp))?\\s+(ALLOW|DENY|REJECT)\\s+IN\\b", line, re.I)
+        match = re.match(r"^\s*80(?:/(tcp|udp))?\s+(ALLOW|DENY|REJECT)\s+IN\b", line, re.I)
         if match and (match.group(1) or "any").lower() in {"tcp", "any"}:
             if match.group(2).upper() == "ALLOW":
                 allow = True
@@ -2581,7 +2582,7 @@ def hysteria_firewall_open_http01_tcp():
     verify = subprocess.run([ufw, "status"], text=True, capture_output=True,
                             check=False, timeout=20)
     confirmed = verify.returncode == 0 and any(
-        re.match(r"^\\s*80(?:/tcp)?\\s+ALLOW\\s+IN\\b", line, re.I)
+        re.match(r"^\s*80(?:/tcp)?\s+ALLOW\s+IN\b", line, re.I)
         for line in verify.stdout.splitlines()
     )
     if not confirmed:
