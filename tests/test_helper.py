@@ -1839,3 +1839,73 @@ def test_hysteria_start_action_requires_exact_request_shape():
         helper.handle_hysteria_action({
             "action": "hysteria_start_service", "udp_port": 8443
         })
+
+
+def test_hysteria_firewall_opens_only_configured_udp_port_with_active_ufw(tmp_path, monkeypatch):
+    config_path = tmp_path / "iyke.yaml"
+    config_path.write_text(json.dumps({"listen": ":8443"}), encoding="utf-8")
+    monkeypatch.setattr(helper, "HYSTERIA_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(helper.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(helper.grp, "getgrnam", lambda name: type("Group", (), {"gr_gid": 123})())
+    real_lstat = helper.os.lstat
+    monkeypatch.setattr(helper.os, "lstat", lambda path: (
+        type("Info", (), {"st_mode": helper.stat.S_IFREG | 0o640,
+                          "st_uid": 0, "st_gid": 123})()
+        if path == str(config_path) else real_lstat(path)
+    ))
+    monkeypatch.setattr(helper.shutil, "which",
+                        lambda name: "/usr/sbin/ufw" if name == "ufw" else "/usr/bin/systemctl")
+    calls = []
+    status_calls = 0
+
+    def fake_run(command, **kwargs):
+        nonlocal status_calls
+        calls.append(command)
+        if command[:2] == ["/usr/bin/systemctl", "is-active"]:
+            return helper.subprocess.CompletedProcess(command, 0, "active\\n", "")
+        if command == ["/usr/sbin/ufw", "status"]:
+            status_calls += 1
+            output = ("Status: active\\n\\nTo                         Action      From\\n"
+                      "8443/udp                   ALLOW IN    Anywhere\\n") if status_calls > 1 else "Status: active\\n"
+            return helper.subprocess.CompletedProcess(command, 0, output, "")
+        if command[:2] == ["/usr/sbin/ufw", "allow"]:
+            return helper.subprocess.CompletedProcess(command, 0, "Rule added", "")
+        raise AssertionError(command)
+
+    monkeypatch.setattr(helper.subprocess, "run", fake_run)
+    result = helper.hysteria_firewall_open_udp()
+    assert result == {
+        "opened": True, "already_allowed": False, "firewall_changed": True,
+        "firewall": "ufw", "udp_port": 8443,
+    }
+    assert [c for c in calls if c[:2] == ["/usr/sbin/ufw", "allow"]] == [
+        ["/usr/sbin/ufw", "allow", "8443/udp", "comment", "Iyke VPS Manager Hysteria 2"]
+    ]
+
+
+def test_hysteria_firewall_refuses_inactive_ufw_without_changing_rules(tmp_path, monkeypatch):
+    config_path = tmp_path / "iyke.yaml"
+    config_path.write_text(json.dumps({"listen": ":8443"}), encoding="utf-8")
+    monkeypatch.setattr(helper, "HYSTERIA_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(helper.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(helper.grp, "getgrnam", lambda name: type("Group", (), {"gr_gid": 123})())
+    real_lstat = helper.os.lstat
+    monkeypatch.setattr(helper.os, "lstat", lambda path: (
+        type("Info", (), {"st_mode": helper.stat.S_IFREG | 0o640,
+                          "st_uid": 0, "st_gid": 123})()
+        if path == str(config_path) else real_lstat(path)
+    ))
+    monkeypatch.setattr(helper.shutil, "which",
+                        lambda name: "/usr/sbin/ufw" if name == "ufw" else "/usr/bin/systemctl")
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        if command[:2] == ["/usr/bin/systemctl", "is-active"]:
+            return helper.subprocess.CompletedProcess(command, 0, "active\\n", "")
+        return helper.subprocess.CompletedProcess(command, 0, "Status: inactive\\n", "")
+
+    monkeypatch.setattr(helper.subprocess, "run", fake_run)
+    with pytest.raises(SystemExit):
+        helper.hysteria_firewall_open_udp()
+    assert not any(command[:2] == ["/usr/sbin/ufw", "allow"] for command in calls)
