@@ -246,14 +246,83 @@ def test_openvpn_crl_state_reports_missing_directive(tmp_path, monkeypatch):
     }
 
 
-def test_openvpn_crl_state_checks_relative_crl_file(tmp_path, monkeypatch):
+def test_openvpn_crl_state_verifies_crl_against_matching_ca(tmp_path, monkeypatch):
     config = tmp_path / "server.conf"
-    crl = tmp_path / "crl.pem"
-    config.write_text("port 1194\ncrl-verify crl.pem\n", encoding="utf-8")
-    crl.write_text("public CRL data\n", encoding="utf-8")
+    pki = tmp_path / "pki"
+    for name in ("issued", "private"):
+        (pki / name).mkdir(parents=True, mode=0o700)
+        (pki / name).chmod(0o700)
+    pki.chmod(0o700)
+    config.write_text("port 1194\ncrl-verify ../pki/crl.pem\n", encoding="utf-8")
+    config.chmod(0o600)
+    for name in ("crl.pem", "ca.crt"):
+        (pki / name).write_text("test public material\n", encoding="utf-8")
+        (pki / name).chmod(0o600)
     _pretend_root_owned(monkeypatch)
+    monkeypatch.setattr(helper, "_openvpn_pki_candidates", lambda: [str(pki)])
+    monkeypatch.setattr(helper.shutil, "which", lambda name: "/usr/bin/openssl")
+    calls = []
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return helper.subprocess.CompletedProcess(args, 0, "verify OK", "")
+    monkeypatch.setattr(helper.subprocess, "run", fake_run)
     assert helper._openvpn_crl_state(str(config)) == {
         "crl_configured": True, "crl_file_present": True
+    }
+    args, kwargs = calls[0]
+    assert args[:2] == ["/usr/bin/openssl", "crl"]
+    assert args[-2:] == ["-noout", "-verify"]
+    assert kwargs["timeout"] == 10
+    assert len(kwargs["pass_fds"]) == 2
+
+
+def test_openvpn_crl_state_rejects_unmatched_pki(tmp_path, monkeypatch):
+    config = tmp_path / "server.conf"
+    pki = tmp_path / "pki"
+    for name in ("issued", "private"):
+        (pki / name).mkdir(parents=True, mode=0o700)
+        (pki / name).chmod(0o700)
+    pki.chmod(0o700)
+    config.write_text("crl-verify crl.pem\n", encoding="utf-8")
+    config.chmod(0o600)
+    (tmp_path / "crl.pem").write_text("not trusted", encoding="utf-8")
+    (tmp_path / "crl.pem").chmod(0o600)
+    _pretend_root_owned(monkeypatch)
+    monkeypatch.setattr(helper, "_openvpn_pki_candidates", lambda: [str(pki)])
+    assert helper._openvpn_crl_state(str(config)) == {
+        "crl_configured": True, "crl_file_present": False
+    }
+
+
+def test_openvpn_crl_state_rejects_invalid_signature(tmp_path, monkeypatch):
+    config = tmp_path / "server.conf"
+    pki = tmp_path / "pki"
+    for name in ("issued", "private"):
+        (pki / name).mkdir(parents=True, mode=0o700)
+        (pki / name).chmod(0o700)
+    pki.chmod(0o700)
+    config.write_text("crl-verify ../pki/crl.pem\n", encoding="utf-8")
+    config.chmod(0o600)
+    for name in ("crl.pem", "ca.crt"):
+        (pki / name).write_text("invalid public material", encoding="utf-8")
+        (pki / name).chmod(0o600)
+    _pretend_root_owned(monkeypatch)
+    monkeypatch.setattr(helper, "_openvpn_pki_candidates", lambda: [str(pki)])
+    monkeypatch.setattr(helper.shutil, "which", lambda name: "/usr/bin/openssl")
+    monkeypatch.setattr(helper.subprocess, "run", lambda *a, **k:
+        helper.subprocess.CompletedProcess(a[0], 1, "", "verification failure"))
+    assert helper._openvpn_crl_state(str(config)) == {
+        "crl_configured": True, "crl_file_present": False
+    }
+
+
+def test_openvpn_crl_state_rejects_duplicate_directives(tmp_path, monkeypatch):
+    config = tmp_path / "server.conf"
+    config.write_text("crl-verify one.pem\ncrl-verify two.pem\n", encoding="utf-8")
+    config.chmod(0o600)
+    _pretend_root_owned(monkeypatch)
+    assert helper._openvpn_crl_state(str(config)) == {
+        "crl_configured": True, "crl_file_present": False
     }
 
 
