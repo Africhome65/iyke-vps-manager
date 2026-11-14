@@ -708,10 +708,6 @@ def test_openvpn_create_client_uses_trusted_easyrsa_and_never_returns_key(tmp_pa
         (pki / name).mkdir(parents=True, mode=0o700)
         (pki / name).chmod(0o700)
     pki.chmod(0o700)
-    (pki / "private" / "phone01.key").write_text("PRIVATE KEY MATERIAL", encoding="utf-8")
-    (pki / "private" / "phone01.key").chmod(0o600)
-    (pki / "issued" / "phone01.crt").write_text("PUBLIC CERTIFICATE", encoding="utf-8")
-    (pki / "issued" / "phone01.crt").chmod(0o600)
     script = tmp_path / "easyrsa"
     script.write_text("#!/bin/sh\\nexit 0\\n", encoding="utf-8")
     script.chmod(0o700)
@@ -723,6 +719,10 @@ def test_openvpn_create_client_uses_trusted_easyrsa_and_never_returns_key(tmp_pa
     calls = []
     def fake_run(args, **kwargs):
         calls.append((args, kwargs))
+        (pki / "private" / "phone01.key").write_text("PRIVATE KEY MATERIAL", encoding="utf-8")
+        (pki / "private" / "phone01.key").chmod(0o600)
+        (pki / "issued" / "phone01.crt").write_text("PUBLIC CERTIFICATE", encoding="utf-8")
+        (pki / "issued" / "phone01.crt").chmod(0o600)
         return helper.subprocess.CompletedProcess(args, 0, "", "")
     monkeypatch.setattr(helper.subprocess, "run", fake_run)
     result = helper.openvpn_create_client("phone01")
