@@ -351,7 +351,7 @@ def create_app(test_config=None):
             if result.get("created") is not True or result.get("name") != name or result.get("protocol") != protocol:
                 raise RuntimeError("Xray client creation could not be verified")
             audit("xray_client_created", f"Created Xray {protocol.upper()} client {name}")
-            flash(f"Xray {protocol.upper()} client {name} created. Listener configuration and connection profiles are the next step.", "success")
+            flash(f"Xray {protocol.upper()} client {name} created and activated in the existing inbound.", "success")
         except (RuntimeError, json.JSONDecodeError) as exc:
             flash(str(exc), "error")
         return redirect(url_for("vpn_services"))
@@ -366,7 +366,7 @@ def create_app(test_config=None):
             if result.get("revoked") is not True or result.get("name") != name:
                 raise RuntimeError("Xray client revocation could not be verified")
             audit("xray_client_revoked", f"Revoked Xray client {name}")
-            flash(f"Xray client {name} removed from the protected client registry.", "success")
+            flash(f"Xray client {name} revoked from the active inbound and manager registry.", "success")
         except (RuntimeError, json.JSONDecodeError) as exc:
             flash(str(exc), "error")
         return redirect(url_for("vpn_services"))
