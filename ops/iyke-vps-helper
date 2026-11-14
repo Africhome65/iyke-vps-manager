@@ -265,14 +265,14 @@ def _openvpn_index_clients(index_text):
     """Parse Easy-RSA index metadata only; never read certificate or key files."""
     clients = []
     for line in index_text.splitlines():
-        fields = line.split("\\t")
+        fields = line.split("\t")
         if len(fields) != 6 or fields[0] not in {"V", "R", "E"}:
             continue
         status, expiry_raw, revoked_raw, serial, _filename, subject = fields
         cn_match = re.search(r"(?:^|/)CN=([^/]+)", subject)
         if not cn_match:
             continue
-        common_name = cn_match.group(1).replace(r"\\/", "/")
+        common_name = cn_match.group(1).replace(r"\/", "/")
         if (not common_name or len(common_name) > 128
                 or any(ord(char) < 32 or ord(char) == 127 for char in common_name)):
             continue
