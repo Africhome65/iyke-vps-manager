@@ -44,13 +44,14 @@ def _validate_inputs(client_id, hostname, path, name):
 def build_vmess_uri(client_id, hostname, path, name, port=443):
     """Return a VMess-over-WebSocket-over-TLS URI."""
     client_id, host, path, name = _validate_inputs(client_id, hostname, path, name)
-    if port != 443:
-        raise ValueError("Only the detected Caddy TLS port 443 is supported")
+    if port not in (80, 443):
+        raise ValueError("Only ports 80 and 443 are supported")
+    tls = port == 443
     profile = {
         "v": "2",
         "ps": name,
         "add": host,
-        "port": "443",
+        "port": str(port),
         "id": client_id,
         "aid": "0",
         "scy": "auto",
@@ -58,8 +59,8 @@ def build_vmess_uri(client_id, hostname, path, name, port=443):
         "type": "none",
         "host": host,
         "path": path,
-        "tls": "tls",
-        "sni": host,
+        "tls": "tls" if tls else "",
+        "sni": host if tls else "",
     }
     encoded = base64.b64encode(
         json.dumps(profile, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
@@ -70,14 +71,17 @@ def build_vmess_uri(client_id, hostname, path, name, port=443):
 def build_vless_uri(client_id, hostname, path, name, port=443):
     """Return a VLESS-over-WebSocket-over-TLS URI."""
     client_id, host, path, name = _validate_inputs(client_id, hostname, path, name)
-    if port != 443:
-        raise ValueError("Only the detected Caddy TLS port 443 is supported")
-    query = urlencode({
+    if port not in (80, 443):
+        raise ValueError("Only ports 80 and 443 are supported")
+    tls = port == 443
+    parameters = {
         "encryption": "none",
-        "security": "tls",
-        "sni": host,
+        "security": "tls" if tls else "none",
         "type": "ws",
         "host": host,
         "path": path,
-    }, quote_via=quote, safe="")
-    return f"vless://{client_id}@{host}:443?{query}#{quote(name, safe='')}"
+    }
+    if tls:
+        parameters["sni"] = host
+    query = urlencode(parameters, quote_via=quote, safe="")
+    return f"vless://{client_id}@{host}:{port}?{query}#{quote(name, safe='')}"
