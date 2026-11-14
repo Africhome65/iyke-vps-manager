@@ -520,3 +520,85 @@ def test_xray_profile_refuses_registry_only_identity(tmp_path, monkeypatch):
     monkeypatch.setattr(helper, "_xray_config_has_client", lambda protocol, client_id: False)
     with pytest.raises(SystemExit):
         helper.xray_get_client_profile("phone01")
+
+
+
+def _managed_xray_test_config():
+    return {
+        "inbounds": [{
+            "tag": "vmess-ws", "listen": "127.0.0.1", "port": 10000,
+            "protocol": "vmess",
+            "settings": {"clients": [{"id": "11111111-1111-4111-8111-111111111111", "alterId": 0}]},
+            "streamSettings": {"network": "ws", "security": "none",
+                               "wsSettings": {"path": "/vmess"}}
+        }, {
+            "tag": "vless-ws", "listen": "127.0.0.1", "port": 10001,
+            "protocol": "vless",
+            "settings": {"decryption": "none", "clients": [
+                {"id": "22222222-2222-4222-8222-222222222222", "email": "original"}
+            ]},
+            "streamSettings": {"network": "ws", "security": "none",
+                               "wsSettings": {"path": "/vless"}}
+        }]
+    }
+
+
+def _fake_xray_metadata():
+    from types import SimpleNamespace
+    return SimpleNamespace(st_uid=0, st_gid=0, st_mode=stat.S_IFREG | 0o640)
+
+
+def test_xray_create_client_adds_only_manager_client_and_preserves_original(tmp_path, monkeypatch):
+    _prepare_xray_state_dir(monkeypatch, tmp_path)
+    config = _managed_xray_test_config()
+    applied = []
+    monkeypatch.setattr(helper, "_read_xray_config_document",
+                        lambda: (b'{"original":true}\n', json.loads(json.dumps(config)), _fake_xray_metadata()))
+    monkeypatch.setattr(helper, "_apply_xray_config_change",
+                        lambda candidate, raw, metadata: applied.append(candidate) or "/protected/backup.bak")
+    result = helper.xray_create_client("phone01", "vmess")
+    assert result == {"created": True, "name": "phone01", "protocol": "vmess",
+                      "backup": "backup.bak"}
+    clients = applied[0]["inbounds"][0]["settings"]["clients"]
+    assert clients[0]["id"] == "11111111-1111-4111-8111-111111111111"
+    assert clients[1]["alterId"] == 0
+    assert len(clients[1]["id"]) == 36
+    assert _load_rows_for_test(helper, "phone01")["protocol"] == "vmess"
+
+
+def _load_rows_for_test(helper_module, name):
+    return next(row for row in helper_module._load_xray_clients() if row["name"] == name)
+
+
+def test_xray_revoke_removes_only_managed_uuid_and_preserves_original(tmp_path, monkeypatch):
+    _prepare_xray_state_dir(monkeypatch, tmp_path)
+    helper._save_xray_clients([{
+        "name": "phone01", "protocol": "vless",
+        "id": "33333333-3333-4333-8333-333333333333"
+    }])
+    config = _managed_xray_test_config()
+    config["inbounds"][1]["settings"]["clients"].append({
+        "id": "33333333-3333-4333-8333-333333333333", "email": "phone01"
+    })
+    applied = []
+    monkeypatch.setattr(helper, "_read_xray_config_document",
+                        lambda: (b'{"original":true}\n', json.loads(json.dumps(config)), _fake_xray_metadata()))
+    monkeypatch.setattr(helper, "_apply_xray_config_change",
+                        lambda candidate, raw, metadata: applied.append(candidate) or "/protected/backup.bak")
+    assert helper.xray_revoke_client("phone01") == {"revoked": True, "name": "phone01"}
+    remaining = applied[0]["inbounds"][1]["settings"]["clients"]
+    assert remaining == [{"id": "22222222-2222-4222-8222-222222222222", "email": "original"}]
+    assert helper._load_xray_clients() == []
+
+
+def test_xray_client_mutation_refuses_ambiguous_inbounds(tmp_path, monkeypatch):
+    _prepare_xray_state_dir(monkeypatch, tmp_path)
+    config = _managed_xray_test_config()
+    config["inbounds"].append(json.loads(json.dumps(config["inbounds"][0])))
+    monkeypatch.setattr(helper, "_read_xray_config_document",
+                        lambda: (b'{}', config, _fake_xray_metadata()))
+    monkeypatch.setattr(helper, "_apply_xray_config_change",
+                        lambda *args: pytest.fail("ambiguous config must not be written"))
+    with pytest.raises(SystemExit):
+        helper.xray_create_client("phone01", "vmess")
+    assert helper._load_xray_clients() == []
