@@ -191,6 +191,23 @@ def test_openvpn_clients_rejects_symlink_index(tmp_path, monkeypatch):
     assert helper.openvpn_clients()["available"] is False
 
 
+def test_openvpn_clients_rejects_symlinked_parent_directory(tmp_path, monkeypatch):
+    real_parent = tmp_path / "real"
+    pki = real_parent / "pki"
+    for name in ("issued", "private"):
+        (pki / name).mkdir(parents=True, mode=0o700)
+        (pki / name).chmod(0o700)
+    pki.chmod(0o700)
+    (pki / "index.txt").write_text("", encoding="utf-8")
+    (pki / "index.txt").chmod(0o600)
+    alias = tmp_path / "alias"
+    alias.symlink_to(real_parent, target_is_directory=True)
+    _pretend_root_owned(monkeypatch)
+    monkeypatch.setattr(helper, "_openvpn_pki_candidates",
+                        lambda: [str(alias / "pki")])
+    assert helper.openvpn_clients()["available"] is False
+
+
 def test_openvpn_clients_requires_unambiguous_database(tmp_path, monkeypatch):
     paths = []
     for number in ("one", "two"):
