@@ -529,14 +529,19 @@ def _openvpn_cleanup_failed_issuance(pki, name, easyrsa):
             fail("Unindexed failed issuance artifacts could not be removed; manual recovery is required")
         return
     if record["status"] == "valid":
-        _openvpn_run_easyrsa(easyrsa, pki, ["revoke", name])
-        revoked_index = _read_openvpn_index(index_path)
-        revoked = next((row for row in _openvpn_index_clients(revoked_index or "")
-                        if row["common_name"] == name), None)
-        if revoked is None or revoked["status"] != "revoked":
+        try:
+            _openvpn_run_easyrsa(easyrsa, pki, ["revoke", name])
+            revoked_index = _read_openvpn_index(index_path)
+            revoked = next((row for row in _openvpn_index_clients(revoked_index or "")
+                            if row["common_name"] == name), None)
+            if revoked is None or revoked["status"] != "revoked":
+                fail("Failed issuance certificate could not be confirmed revoked")
+            _openvpn_run_easyrsa(easyrsa, pki, ["gen-crl"])
+            if not _openvpn_crl_contains_serial(os.path.join(pki, "crl.pem"), record["serial"]):
+                fail("Failed issuance CRL does not contain the revoked certificate serial")
+        except BaseException:
             _openvpn_remove_issued_artifact(key_path)
-            fail("Failed issuance certificate could not be confirmed revoked; manual recovery is required")
-        _openvpn_run_easyrsa(easyrsa, pki, ["gen-crl"])
+            fail("Failed issuance revocation or CRL verification failed; private key removed, manual CA recovery is required")
     # A failed issuance must never leave a locally usable client identity.
     if not _openvpn_remove_issued_artifact(key_path):
         fail("Failed issuance private key could not be removed; manual recovery is required")
