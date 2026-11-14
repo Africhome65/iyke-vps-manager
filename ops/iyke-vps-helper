@@ -972,30 +972,16 @@ def xray_create_client(name, protocol):
         fail("That Xray client name is reserved")
     if not isinstance(protocol, str) or protocol not in {"vmess", "vless"}:
         fail("Unsupported Xray client protocol")
-    if not os.path.isfile("/usr/local/bin/xray") or not os.access("/usr/local/bin/xray", os.X_OK):
-        fail("Install Xray-core before creating clients")
-    with xray_client_lock():
-        rows = _load_xray_clients()
-        if any(row["name"] == name for row in rows):
-            fail("An Xray client with that name already exists")
-        if len(rows) >= 1000:
-            fail("The Xray client limit has been reached")
-        client_id = str(uuid.uuid4())
-        rows.append({"name": name, "protocol": protocol, "id": client_id})
-        _save_xray_clients(rows)
-    return {"created": True, "name": name, "protocol": protocol, "id": client_id}
+    # Fail closed until the existing inbound can be updated, tested and rolled back.
+    # A registry-only identity is not a usable VPN account.
+    fail("Xray client provisioning is temporarily disabled until live inbound synchronization is available; no client was created")
 
 
 def xray_revoke_client(name):
     if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,30}", name):
         fail("Invalid Xray client name")
-    with xray_client_lock():
-        rows = _load_xray_clients()
-        updated = [row for row in rows if row["name"] != name]
-        if len(updated) == len(rows):
-            fail("Xray client was not found")
-        _save_xray_clients(updated)
-    return {"revoked": True, "name": name}
+    # Never imply a live identity was revoked when only a registry row could be removed.
+    fail("Xray client revocation is temporarily disabled until live inbound synchronization is available; no configuration was changed")
 
 
 def handle_xray_action(request):
