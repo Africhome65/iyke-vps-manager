@@ -803,3 +803,44 @@ def test_openvpn_unique_pki_rejects_group_readable_ca_key(tmp_path, monkeypatch,
     assert "accessible only to root" in capsys.readouterr().err
 
 
+
+
+
+def test_openvpn_get_profile_builds_inline_profile_only_for_verified_server(monkeypatch):
+    monkeypatch.setattr(helper, "_openvpn_unique_pki", lambda: ("/etc/openvpn/easy-rsa/pki", ""))
+    monkeypatch.setattr(helper, "_openvpn_index_clients", lambda value: [{"common_name": "phone01", "status": "valid"}])
+    monkeypatch.setattr(helper, "_openvpn_server_config_paths", lambda: ["/etc/openvpn/server/server.conf"])
+    monkeypatch.setattr(helper, "_unit_state", lambda unit: "active")
+    monkeypatch.setattr(helper, "_openvpn_runtime_config_matches", lambda unit, path: True)
+    monkeypatch.setattr(helper, "_openvpn_config_directives", lambda path: {
+        "port": [["1194"]], "proto": [["udp"]], "dev": [["tun"]], "ca": [["ca.crt"]]
+    })
+    def read_pem(path, label, max_bytes=1024 * 1024):
+        return {
+            "CA certificate": "-----BEGIN CERTIFICATE-----\\nCA\\n-----END CERTIFICATE-----\\n",
+            "client certificate": "-----BEGIN CERTIFICATE-----\\nCERT\\n-----END CERTIFICATE-----\\n",
+            "client private key": "-----BEGIN PRIVATE KEY-----\\nKEY\\n-----END PRIVATE KEY-----\\n",
+        }[label]
+    monkeypatch.setattr(helper, "_openvpn_read_pem", read_pem)
+    result = helper.openvpn_get_profile("phone01", "vpn.example.com")
+    assert result["name"] == "phone01"
+    assert "remote vpn.example.com 1194" in result["profile"]
+    assert "<ca>" in result["profile"] and "<cert>" in result["profile"]
+    assert "<key>" in result["profile"] and "KEY" in result["profile"]
+
+
+def test_openvpn_get_profile_rejects_private_or_invalid_endpoint(monkeypatch):
+    monkeypatch.setattr(helper, "_openvpn_unique_pki", lambda: pytest.fail("must reject endpoint before reading PKI"))
+    for endpoint in ("127.0.0.1", "localhost", "vpn.example.com:1194", "../bad"):
+        with pytest.raises(SystemExit):
+            helper.openvpn_get_profile("phone01", endpoint)
+
+
+def test_openvpn_get_profile_requires_verified_active_server(monkeypatch):
+    monkeypatch.setattr(helper, "_openvpn_unique_pki", lambda: ("/safe/pki", ""))
+    monkeypatch.setattr(helper, "_openvpn_index_clients", lambda value: [{"common_name": "phone01", "status": "valid"}])
+    monkeypatch.setattr(helper, "_openvpn_server_config_paths", lambda: ["/etc/openvpn/server/server.conf"])
+    monkeypatch.setattr(helper, "_unit_state", lambda unit: "active")
+    monkeypatch.setattr(helper, "_openvpn_runtime_config_matches", lambda unit, path: False)
+    with pytest.raises(SystemExit):
+        helper.openvpn_get_profile("phone01", "vpn.example.com")
