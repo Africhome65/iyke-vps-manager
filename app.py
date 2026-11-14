@@ -349,7 +349,7 @@ def create_app(test_config=None):
             profile = result.get("profile")
             if result.get("name") != name or not isinstance(profile, str) or len(profile) > 4 * 1024 * 1024:
                 raise RuntimeError("OpenVPN profile could not be verified")
-            if not profile.startswith("client\\ndev tun\\n") or "<key>" not in profile:
+            if not profile.startswith("client\ndev tun\n") or "<key>" not in profile:
                 raise RuntimeError("OpenVPN profile format could not be verified")
             audit("openvpn_profile_downloaded", f"Downloaded OpenVPN profile for {name}")
             response = Response(profile, mimetype="application/x-openvpn-profile")
