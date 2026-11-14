@@ -1909,3 +1909,75 @@ def test_hysteria_firewall_refuses_inactive_ufw_without_changing_rules(tmp_path,
     with pytest.raises(SystemExit):
         helper.hysteria_firewall_open_udp()
     assert not any(command[:2] == ["/usr/sbin/ufw", "allow"] for command in calls)
+
+
+def _prepare_hysteria_start_files(tmp_path, monkeypatch):
+    config_path = tmp_path / "iyke.yaml"
+    unit_path = tmp_path / "iyke-hysteria.service"
+    config_path.write_text(json.dumps({
+        "listen": ":8443",
+        "auth": {"type": "password", "password": "x" * 43},
+        "tls": {"cert": "/etc/ssl/fullchain.pem", "key": "/etc/ssl/privkey.pem"},
+    }), encoding="utf-8")
+    unit_path.write_text(
+        "[Unit]\\nDescription=Iyke VPS Manager Hysteria 2 server\\n"
+        "[Service]\\nUser=hysteria\\nGroup=hysteria\\n"
+        "ExecStart=/usr/local/bin/hysteria server --config /etc/hysteria/iyke.yaml\\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "HYSTERIA_CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(helper, "HYSTERIA_UNIT_PATH", str(unit_path))
+    monkeypatch.setattr(helper.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(helper.grp, "getgrnam", lambda name: type("Group", (), {"gr_gid": 123})())
+    real_lstat = helper.os.lstat
+
+    def fake_lstat(path):
+        if path == str(config_path):
+            return type("Info", (), {"st_mode": helper.stat.S_IFREG | 0o640,
+                                     "st_uid": 0, "st_gid": 123})()
+        if path == str(unit_path):
+            return type("Info", (), {"st_mode": helper.stat.S_IFREG | 0o644,
+                                     "st_uid": 0, "st_gid": 0})()
+        return real_lstat(path)
+
+    monkeypatch.setattr(helper.os, "lstat", fake_lstat)
+    monkeypatch.setattr(helper.shutil, "which", lambda name: {
+        "systemctl": "/usr/bin/systemctl",
+        "systemd-analyze": "/usr/bin/systemd-analyze",
+    }.get(name))
+    return config_path, unit_path
+
+
+def test_hysteria_start_verifies_active_and_enabled_dedicated_unit(tmp_path, monkeypatch):
+    _prepare_hysteria_start_files(tmp_path, monkeypatch)
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        if command[:2] == ["/usr/bin/systemd-analyze", "verify"]:
+            return helper.subprocess.CompletedProcess(command, 0, "", "")
+        if command[-2:] == ["is-active", "iyke-hysteria.service"]:
+            return helper.subprocess.CompletedProcess(
+                command, 0 if len([c for c in calls if c[-2:] == ["is-active", "iyke-hysteria.service"]]) > 1 else 3,
+                "active\\n" if len([c for c in calls if c[-2:] == ["is-active", "iyke-hysteria.service"]]) > 1 else "inactive\\n", "")
+        if command[-2:] == ["is-enabled", "iyke-hysteria.service"]:
+            return helper.subprocess.CompletedProcess(
+                command, 0 if len([c for c in calls if c[-2:] == ["is-enabled", "iyke-hysteria.service"]]) > 1 else 1,
+                "enabled\\n" if len([c for c in calls if c[-2:] == ["is-enabled", "iyke-hysteria.service"]]) > 1 else "disabled\\n", "")
+        return helper.subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper.subprocess, "run", fake_run)
+    result = helper.hysteria_start_service()
+    assert result == {
+        "started": True, "enabled": True, "service_state": "active",
+        "service_unit": "iyke-hysteria.service", "firewall_changed": False,
+        "udp_port": 8443,
+    }
+    assert [c[-2:] for c in calls if c[0] == "/usr/bin/systemctl"] == [
+        ["is-active", "iyke-hysteria.service"],
+        ["is-enabled", "iyke-hysteria.service"],
+        ["start", "iyke-hysteria.service"],
+        ["is-active", "iyke-hysteria.service"],
+        ["enable", "iyke-hysteria.service"],
+        ["is-enabled", "iyke-hysteria.service"],
+    ]
